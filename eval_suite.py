@@ -22,6 +22,7 @@ Usage
   python eval_suite.py --mode standard
   python eval_suite.py --mode benign
   python eval_suite.py --mode evasion
+  python eval_suite.py --mode adversarial
   python eval_suite.py --mode all
 """
 
@@ -101,6 +102,28 @@ def _wilson_interval(successes: int, n: int, z: float = 1.96) -> tuple[float, fl
         / denom
     )
     return max(0.0, centre - margin), min(1.0, centre + margin)
+
+
+def _ci_pair(interval) -> list[float]:
+    return [round(float(interval[0]), 4), round(float(interval[1]), 4)]
+
+
+def _bootstrap_interval(values_fn, n: int, seed: int = 42, n_bootstrap: int = 2000):
+    if n <= 0:
+        return "N/A"
+    rng = np.random.default_rng(seed)
+    scores = []
+    for _ in range(n_bootstrap):
+        idx = rng.integers(0, n, size=n)
+        try:
+            score = values_fn(idx)
+        except ValueError:
+            continue
+        if score is not None and math.isfinite(float(score)):
+            scores.append(float(score))
+    if not scores:
+        return "N/A"
+    return _ci_pair((np.percentile(scores, 2.5), np.percentile(scores, 97.5)))
 
 
 # Synthetic tokens injected by code-to-nl dataset construction (CoNaLa/CONCODE).
@@ -326,10 +349,14 @@ class BenchmarkRunner:
         y_det = [e["pred_detected"] for e in entries]
         y_prob = [e["risk_score"] for e in entries]
 
-        try:
-            sklearn_auc_roc = round(float(roc_auc_score(y_true, y_prob)), 4)
-        except ValueError:
+        if len(set(y_true)) < 2:
             sklearn_auc_roc = "N/A"
+        else:
+            try:
+                auc_value = float(roc_auc_score(y_true, y_prob))
+                sklearn_auc_roc = round(auc_value, 4) if math.isfinite(auc_value) else "N/A"
+            except ValueError:
+                sklearn_auc_roc = "N/A"
 
         # Prevention metrics
         cm_prev = confusion_matrix(y_true, y_prev, labels=[0, 1])
@@ -376,6 +403,46 @@ class BenchmarkRunner:
             auc_roc_plot = _plot_roc_curve(y_true, y_prob, name, self.plots_dir)
             auc_pr_plot = _plot_pr_curve(y_true, y_prob, name, self.plots_dir)
 
+        y_true_arr = np.asarray(y_true)
+        y_prev_arr = np.asarray(y_prev)
+        y_det_arr = np.asarray(y_det)
+        y_prob_arr = np.asarray(y_prob)
+        n_entries = len(entries)
+
+        confidence_intervals = {
+            "method": "Wilson score for ADR/FPR/precision; bootstrap percentile for F1/ROC-AUC",
+            "level": 0.95,
+            "ADR_prevention": _ci_pair(_wilson_interval(tp_p, tp_p + fn_p)),
+            "ADR_detection": _ci_pair(_wilson_interval(tp_d, tp_d + fn_d)),
+            "FPR_prevention": _ci_pair(_wilson_interval(fp_p, fp_p + tn_p)),
+            "FPR_detection": _ci_pair(_wilson_interval(fp_d, fp_d + tn_d)),
+            "precision_prevention": _ci_pair(_wilson_interval(tp_p, tp_p + fp_p)),
+            "precision_detection": _ci_pair(_wilson_interval(tp_d, tp_d + fp_d)),
+            "F1_prevention": _bootstrap_interval(
+                lambda idx: f1_score(y_true_arr[idx], y_prev_arr[idx], zero_division=0),
+                n_entries,
+                seed=43,
+            ),
+            "F1_detection": _bootstrap_interval(
+                lambda idx: f1_score(y_true_arr[idx], y_det_arr[idx], zero_division=0),
+                n_entries,
+                seed=44,
+            ),
+            "ROC_AUC": (
+                _bootstrap_interval(
+                    lambda idx: (
+                        roc_auc_score(y_true_arr[idx], y_prob_arr[idx])
+                        if len(set(y_true_arr[idx])) >= 2
+                        else None
+                    ),
+                    n_entries,
+                    seed=45,
+                )
+                if len(set(y_true)) >= 2
+                else "N/A"
+            ),
+        }
+
         return {
             "n": len(entries),
             "ADR_prevention": round(float(recall_score(y_true, y_prev, zero_division=0)), 4),
@@ -407,6 +474,7 @@ class BenchmarkRunner:
             "cache_stats": cache_stats,
             "layer_attribution": layer_catches,
             "early_exit_count": early_exit_count,
+            "confidence_intervals_95": confidence_intervals,
         }
 
     def _print_metrics(self, name: str, metrics: dict) -> None:
@@ -619,6 +687,7 @@ class BenchmarkRunner:
                     yield item
 
         jsonl_sources = [
+            (Path("data/validation_benign_expanded.jsonl"), ("text", "query", "question"), "validation_benign_expanded"),
             (Path("data/benign_queries.jsonl"), ("text", "query", "question"), "benign_queries"),
             (Path("data/wildchat_benign.jsonl"), ("text", "query", "prompt"), "wildchat_benign"),
             (Path("data/xstest.jsonl"), ("text", "query", "prompt"), "xstest"),
@@ -717,27 +786,130 @@ class BenchmarkRunner:
     def run_evasion(self) -> dict:
         print("\n[eval] Running evasion evaluation ...")
         entries = []
-        for case in EVASION_CASES:
-            if case.get("type") == "indirect_injection":
-                # Indirect injection: attack in document, query is benign
-                doc = case["text"] + (" " + case["continuation"] if case.get("continuation") else "")
-                query = "Please answer the user query based on the document."
-            else:
-                # Direct injection: attack in query, document is benign
-                doc = "This is a normal benign corporate policy document."
-                query = case["text"] + (" " + case["continuation"] if case.get("continuation") else "")
+        ev_path = Path("data/evasion_validation_curated.csv")
+        if not ev_path.exists():
+            ev_path = Path("data/evasion_benchmark_n100.csv")
+        if ev_path.exists():
+            print(f"  [evasion] Loading evasion benchmark from {ev_path} ...")
+            import pandas as pd
+            df = pd.read_csv(ev_path)
+            for _, row in df.iterrows():
+                text = _clean_text(row.get("text"))
+                if not _valid_eval_text(text):
+                    continue
+                attack_type = str(row.get("type", "unknown"))
+                placement = str(row.get("placement", "")).lower()
+                if attack_type == "indirect_injection" or placement == "document":
+                    doc = text
+                    query = "Please answer the user query based on the document."
+                else:
+                    doc = "This is a normal benign corporate policy document."
+                    query = text
+                entries.append(self._run_one(
+                    doc=doc,
+                    query=query,
+                    label=1,
+                    attack_type=attack_type,
+                ))
+        else:
+            print("  [evasion] Evasion CSV not found — falling back to hand-crafted EVASION_CASES ...")
+            for case in EVASION_CASES:
+                if case.get("type") == "indirect_injection":
+                    # Indirect injection: attack in document, query is benign
+                    doc = case["text"] + (" " + case["continuation"] if case.get("continuation") else "")
+                    query = "Please answer the user query based on the document."
+                else:
+                    # Direct injection: attack in query, document is benign
+                    doc = "This is a normal benign corporate policy document."
+                    query = case["text"] + (" " + case["continuation"] if case.get("continuation") else "")
 
-            entries.append(self._run_one(
-                doc=doc,
-                query=query,
-                label=case["label"],
-                attack_type=case.get("type"),
-            ))
+                entries.append(self._run_one(
+                    doc=doc,
+                    query=query,
+                    label=case["label"],
+                    attack_type=case.get("type"),
+                ))
 
         metrics = self._metrics(entries, name="evasion")
+        family_counts = {}
+        family_caught = {}
+        for entry in entries:
+            family = entry.get("attack_type") or "unknown"
+            family_counts[family] = family_counts.get(family, 0) + 1
+            if entry["pred_prevented"] == 1:
+                family_caught[family] = family_caught.get(family, 0) + 1
+        metrics["family_counts"] = family_counts
+        metrics["family_ADR_prevention"] = {
+            family: round(family_caught.get(family, 0) / count, 4)
+            for family, count in sorted(family_counts.items())
+        }
         self._print_metrics(
             "Evasion Evaluation (Novel / Hand-Crafted Attacks)", metrics
         )
+        return metrics
+
+    def run_adversarial(self) -> dict:
+        print("\n[eval] Running adversarial benchmark ...")
+        entries = []
+        adv_path = Path("data/adversarial_validation_curated.csv")
+        if not adv_path.exists():
+            print(
+                "  [adversarial] Missing data/adversarial_validation_curated.csv. "
+                "Run: python build_validation_sets.py"
+            )
+            metrics = self._metrics(entries, name="adversarial")
+            self._print_metrics("Adversarial Benchmark", metrics)
+            return metrics
+
+        print(f"  [adversarial] Loading benchmark from {adv_path} ...")
+        import pandas as pd
+        df = pd.read_csv(adv_path)
+        for _, row in df.iterrows():
+            text = _clean_text(row.get("text"))
+            if not _valid_eval_text(text):
+                continue
+            attack_type = str(row.get("type", "unknown"))
+            placement = str(row.get("placement", "")).lower()
+            if placement == "document":
+                doc = text
+                query = "Please summarize the retrieved business document."
+            else:
+                doc = "This is a normal benign corporate policy document."
+                query = text
+            entries.append(self._run_one(
+                doc=doc,
+                query=query,
+                label=1,
+                attack_type=attack_type,
+                source=str(row.get("source", "curated_adversarial_validation")),
+            ))
+
+        metrics = self._metrics(entries, name="adversarial")
+        family_counts = {}
+        family_caught = {}
+        placement_counts = {}
+        for entry in entries:
+            family = entry.get("attack_type") or "unknown"
+            family_counts[family] = family_counts.get(family, 0) + 1
+            if entry["pred_prevented"] == 1:
+                family_caught[family] = family_caught.get(family, 0) + 1
+
+        for _, row in df.iterrows():
+            placement = str(row.get("placement", "unknown")).lower()
+            placement_counts[placement] = placement_counts.get(placement, 0) + 1
+
+        metrics["family_counts"] = family_counts
+        metrics["family_ADR_prevention"] = {
+            family: round(family_caught.get(family, 0) / count, 4)
+            for family, count in sorted(family_counts.items())
+        }
+        metrics["placement_counts"] = placement_counts
+        metrics["provenance"] = (
+            str(df["provenance"].dropna().iloc[0])
+            if "provenance" in df.columns and not df["provenance"].dropna().empty
+            else "unknown"
+        )
+        self._print_metrics("Adversarial Benchmark", metrics)
         return metrics
 
     # ─────────────────────────────────────────────────────────────────────────
@@ -748,6 +920,8 @@ class BenchmarkRunner:
         standard = self.run_standard()
         benign   = self.run_benign()
         evasion  = self.run_evasion()
+        adversarial = self.run_adversarial()
+        expanded = self.run_benign_expanded(limit=500)
 
         print("\n[eval] Generating combined ROC / PR curves ...")
         combined = self._metrics(self.results_log, name="combined")
@@ -759,8 +933,12 @@ class BenchmarkRunner:
         print(f"  ADR Detection (standard)   : {standard.get('ADR_detection', 'N/A')}")
         print(f"  ADR Prevention (evasion)   : {evasion.get('ADR_prevention', 'N/A')}")
         print(f"  ADR Detection (evasion)    : {evasion.get('ADR_detection', 'N/A')}")
+        print(f"  ADR Prevention (adversarial): {adversarial.get('ADR_prevention', 'N/A')}")
+        print(f"  ADR Detection (adversarial) : {adversarial.get('ADR_detection', 'N/A')}")
         print(f"  FPR Prevention (benign)    : {benign.get('FPR_prevention', 'N/A')}")
         print(f"  FPR Detection (benign)     : {benign.get('FPR_detection', 'N/A')}")
+        print(f"  FPR Prevention (expanded)  : {expanded.get('FPR_prevention', 'N/A')}")
+        print(f"  FPR Detection (expanded)   : {expanded.get('FPR_detection', 'N/A')}")
         print(f"  F1 Prevention (standard)   : {standard.get('F1_prevention', 'N/A')}")
         print(f"  F1 Detection (standard)    : {standard.get('F1_detection', 'N/A')}")
         print(f"  Mean Latency (ms)          : {standard.get('mean_latency_ms', 'N/A')}")
@@ -778,11 +956,36 @@ class BenchmarkRunner:
             "standard": standard,
             "benign":   benign,
             "evasion":  evasion,
+            "adversarial": adversarial,
+            "expanded": expanded,
             "combined": combined,
         }
 
     def save_report(self, metrics: dict,
                     path: str = "logs/eval_report.json") -> None:
+        if isinstance(metrics, dict):
+            try:
+                from freeze_state import FREEZE_PATH, compare_to_frozen
+
+                freeze_report = compare_to_frozen()
+                freeze_meta = {
+                    "freeze_file": str(FREEZE_PATH).replace("\\", "/"),
+                    "freeze_status": freeze_report.get("status"),
+                    "frozen_created_at_utc": freeze_report.get("frozen_created_at_utc"),
+                    "difference_count": len(freeze_report.get("differences", [])),
+                }
+                if FREEZE_PATH.exists():
+                    with open(FREEZE_PATH, encoding="utf-8") as f:
+                        frozen = json.load(f)
+                    freeze_meta["thresholds"] = frozen.get("thresholds", {})
+                    freeze_meta["config_flags"] = frozen.get("config_flags", {})
+                    freeze_meta["git"] = frozen.get("git", {})
+                metrics["_evaluation_state"] = freeze_meta
+            except Exception as exc:
+                metrics["_evaluation_state"] = {
+                    "freeze_status": "unavailable",
+                    "error": str(exc),
+                }
         Path(path).parent.mkdir(parents=True, exist_ok=True)
         with open(path, "w", encoding="utf-8") as f:
             json.dump(metrics, f, indent=2, default=_json_convert)
@@ -797,7 +1000,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="RAG Defense - Evaluation Suite")
     parser.add_argument(
         "--mode",
-        choices=["standard", "benign", "evasion", "all"],
+        choices=["standard", "benign", "evasion", "adversarial", "all"],
         default="all",
     )
     parser.add_argument(
@@ -805,9 +1008,45 @@ if __name__ == "__main__":
         default="logs/curves",
         help="Directory to save ROC and PR curve images",
     )
+    parser.add_argument(
+        "--require-clean-splits",
+        action="store_true",
+        help="Build/check data split manifest and abort if cross-split leakage is found.",
+    )
+    parser.add_argument(
+        "--require-frozen-state",
+        action="store_true",
+        help="Abort if thresholds or tracked artifacts differ from logs/frozen_thresholds.json.",
+    )
     args = parser.parse_args()
 
     print("\n=== RAG Defense - Evaluation Suite ===\n")
+
+    if args.require_clean_splits:
+        from split_registry import build_manifest, check_leakage
+
+        print("[eval] Verifying split manifest before evaluation ...")
+        split_samples = build_manifest()
+        split_report = check_leakage(split_samples)
+        if split_report["status"] != "passed":
+            raise SystemExit(
+                "[eval] Split leakage check failed. "
+                "Inspect data/splits/leakage_report.json before reporting results."
+            )
+        print("[eval] Split leakage check passed.")
+
+    if args.require_frozen_state:
+        from freeze_state import compare_to_frozen
+
+        print("[eval] Verifying frozen thresholds/artifacts before evaluation ...")
+        freeze_report = compare_to_frozen()
+        if freeze_report["status"] != "passed":
+            raise SystemExit(
+                "[eval] Frozen-state check failed. "
+                "Run 'python freeze_state.py check' for details, or refreeze only after dev calibration."
+            )
+        print("[eval] Frozen-state check passed.")
+
     print("Loading pipeline ...")
 
     from layer1_anomaly import load_detector
@@ -840,6 +1079,8 @@ if __name__ == "__main__":
         metrics = runner.run_benign()
     elif args.mode == "evasion":
         metrics = runner.run_evasion()
+    elif args.mode == "adversarial":
+        metrics = runner.run_adversarial()
     else:
         metrics = runner.run_all()
 

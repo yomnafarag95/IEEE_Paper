@@ -92,6 +92,8 @@ docker run -p 8501:8501 rag-shield
 # Full evaluation
 python eval_suite.py --mode all
 
+# Evaluation reports include confidence_intervals_95 for headline metrics
+
 # Ablation study
 python ablation_study.py
 ```
