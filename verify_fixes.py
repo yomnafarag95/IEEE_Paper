@@ -8,6 +8,12 @@ Asserts:
   3. Valid feature scaling statistics (no extreme scale values).
   4. Accuracy benchmarks on benign (FPR = 0%) and attacks (Recall >= 80%).
 """
+# Import onnxruntime first to avoid OpenMP DLL conflict on Windows
+try:
+    import onnxruntime as _ort
+except ImportError:
+    pass
+
 import os
 import json
 import numpy as np

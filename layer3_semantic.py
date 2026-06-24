@@ -635,7 +635,7 @@ if __name__ == "__main__":
     loader_tr  = DataLoader(ds_tr,  batch_size=16, shuffle=True)
     loader_val = DataLoader(ds_val, batch_size=16, shuffle=False)
 
-    # ── Optimiser ─────────────────────────────────────────────────────────────
+    # ── Optimizer ─────────────────────────────────────────────────────────────
     optimizer = AdamW(model.parameters(), lr=2e-5, weight_decay=0.01)
 
     # ── Training loop ─────────────────────────────────────────────────────────

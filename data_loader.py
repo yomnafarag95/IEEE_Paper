@@ -814,31 +814,8 @@ def download_benign_queries() -> None:
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# FIX #13 — Extended benign set
+# Extended benign set
 # ─────────────────────────────────────────────────────────────────────────────
-
-def download_bipia() -> None:
-    """Robust downloader for BIPIA dataset from reliable sources."""
-    dest = DATA_DIR / "bipia.jsonl"
-    if _already(dest):
-        return
-    import requests
-    sources = [
-        "https://raw.githubusercontent.com/yixinsun/bipia/main/dataset.jsonl",
-        "https://huggingface.co/datasets/your-org/bipia-mirror/raw/main/dataset.jsonl"
-    ]
-    for url in sources:
-        try:
-            print(f"  [download] BIPIA from {url} ...")
-            resp = requests.get(url, timeout=10)
-            if resp.status_code == 200:
-                with open(dest, "w", encoding="utf-8") as f:
-                    f.write(resp.text)
-                print(f"  [ok] BIPIA saved to {dest}")
-                return
-        except Exception as e:
-            print(f"  [warn] Failed {url}: {e}")
-    print("  [error] BIPIA download failed.")
 
 def build_extended_benign(seed: int = 42) -> None:
     dest = DATA_DIR / "extended_benign.csv"

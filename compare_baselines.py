@@ -35,6 +35,12 @@ Notes
   - PromptGuard downloads ~86M params from HuggingFace on first run.
 """
 
+# Import onnxruntime first to avoid OpenMP DLL conflict on Windows
+try:
+    import onnxruntime as _ort
+except ImportError:
+    pass
+
 import argparse
 import json
 import time

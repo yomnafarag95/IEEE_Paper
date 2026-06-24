@@ -32,6 +32,12 @@ Dependencies:
   pip install openai>=1.0.0  (Groq uses the OpenAI-compatible API)
 """
 
+# Import onnxruntime first to avoid OpenMP DLL conflict on Windows
+try:
+    import onnxruntime as _ort
+except ImportError:
+    pass
+
 import argparse
 import os
 import sys

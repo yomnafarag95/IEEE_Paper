@@ -1,3 +1,9 @@
+# Import onnxruntime first to avoid OpenMP DLL conflict on Windows
+try:
+    import onnxruntime as _ort
+except ImportError:
+    pass
+
 import streamlit as st
 import time
 import re
@@ -746,7 +752,7 @@ with tab_pipeline:
         elif r["monitored"]:
             rdot, rtxt = "monitor", "Request flagged and logged for review. Partial response withheld."
         else:
-            rdot, rtxt = "passed",  "Document passed all defence layers. Response would be generated here."
+            rdot, rtxt = "passed",  "Document passed all defense layers. Response would be generated here."
 
         st.markdown(f"""
         <div class="rag-response">

@@ -14,9 +14,15 @@ Responsibilities
 Meta Aggregator
 ───────────────
   Model: calibrated LogisticRegressionCV (sklearn)
-  Features: 10 signals (layer scores + cross-layer interaction terms)
+  Features: 7 signals (layer scores + cross-layer interaction terms)
   Output: calibrated attack probability + action label
 """
+
+# Import onnxruntime first to avoid OpenMP DLL conflict on Windows
+try:
+    import onnxruntime as _ort
+except ImportError:
+    pass
 
 import json
 import pickle
@@ -133,18 +139,15 @@ class MetaAggregator:
     """
     Learned meta-classifier that combines evidence from all three layers.
 
-    Feature vector (10 dimensions)
-    ───────────────────────────────
-      l1_max_chunk   : worst individual chunk anomaly score
-      l1_window_max  : worst sliding-window score
-      l1_full        : full-document anomaly score
-      l2_stage1      : Layer 2 attack probability
-      l2_consistency : query-document lexical consistency
-      l3_schema      : 0 if schema valid, 1 if violated
-      l3_boundary    : normalised boundary violation count
-      l3_consistency : Layer 3 response consistency risk
-      l1xl2          : interaction term (l1_max x l2_stage1)
-      l1xl3          : interaction term (l1_full x l3_consistency)
+    Feature vector (7 dimensions)
+    ─────────────────────────────
+      r1_max         : worst individual chunk anomaly score
+      r2             : Layer 2 attack probability
+      v_sch          : 0 if schema valid, 1 if violated
+      v_bnd          : normalized boundary violation count
+      r3             : Layer 3 response consistency risk
+      r1r2           : interaction term (r1_max x r2)
+      r1r3           : interaction term (r1_max x r3)
     """
 
     def __init__(self, model=None, scaler=None):
@@ -165,19 +168,18 @@ class MetaAggregator:
         self.scaler = scaler
 
     def _features(self, l1: dict, l2: dict, l3: dict) -> np.ndarray:
-        # l2_consistency_score features scale naturally since training query-document pairs are matched.
-        l2_consist_safe = float(l2["consistency_score"])
+        # 7-feature set (v2): removed r1_win, r1_full (multicollinear with r1_max,
+        # caused unstable opposing regression weights) and r2_cs (L2 word-overlap
+        # consistency — incorrectly flags benign out-of-domain queries as suspicious).
+        # Feature order MUST match FEATURE_COLS in train_meta_aggregator.py exactly.
         return np.array([
-            l1["max_score"],
-            max(l1["window_scores"], default=0.0),
-            l1["full_score"],
-            l2["stage1_prob"],
-            l2_consist_safe,
-            0.0 if l3["schema_valid"] else 1.0,
-            min(len(l3["boundary_violations"]) / max(META_HARD_BLOCK_VIOLS, 1), 1.0),
-            l3["consistency_score"],
-            l1["max_score"] * l2["stage1_prob"],
-            l1["full_score"] * l3["consistency_score"],
+            l1["max_score"],                                                              # r1_max
+            l2["stage1_prob"],                                                            # r2
+            0.0 if l3["schema_valid"] else 1.0,                                         # v_sch
+            min(len(l3["boundary_violations"]) / max(META_HARD_BLOCK_VIOLS, 1), 1.0),  # v_bnd
+            l3["consistency_score"],                                                      # r3
+            l1["max_score"] * l2["stage1_prob"],                                         # r1r2
+            l1["max_score"] * l3["consistency_score"],                                   # r1r3
         ])
 
     def fit(self, feature_matrix: np.ndarray, labels: list) -> "MetaAggregator":
@@ -187,7 +189,7 @@ class MetaAggregator:
         self._fitted = True
         return self
 
-    def predict(self, l1: dict, l2: dict, l3: dict, query: str = "") -> dict:
+    def predict(self, l1: dict, l2: dict, l3: dict, query: str = "", document: str = "", chunks: list = None) -> dict:
         features = self._features(l1, l2, l3)
 
         # Hard escalation — boundary violations trigger instant block.
@@ -221,11 +223,34 @@ class MetaAggregator:
         kw_match = None
         kw_boost = 0.0
 
+        # ── Scan the user QUERY for injection keywords ────────────────────────
         if query:
             kw_found, kw_match, kw_boost = keyword_check(query)
             if kw_found:
                 prob = min(prob + kw_boost, 1.0)
-                logger.info(f"Keyword boost: '{kw_match}' +{kw_boost:.2f} -> {prob:.4f}")
+                logger.info(f"Keyword boost (query): '{kw_match}' +{kw_boost:.2f} -> {prob:.4f}")
+
+        # ── Scan the DOCUMENT for indirect injection keywords ─────────────────
+        # Indirect injection attacks embed commands inside retrieved documents.
+        # e.g. Query="Summarize the policy" / Doc="...Section 7... [INJECT HERE]..."
+        # We scan ALL document chunks (not just first 2000 chars) to catch injections
+        # buried deep in long policy documents (business_workflow_manipulation pattern).
+        # A reduced boost (0.75x) is applied since document content is one step removed.
+        if not kw_found:
+            # Use pre-split chunks if available (catches deep injections); else fall back
+            doc_segments = chunks if chunks else ([document] if document else [])
+            for seg in doc_segments:
+                if not seg:
+                    continue
+                doc_kw_found, doc_kw_match, doc_kw_boost = keyword_check(seg)
+                if doc_kw_found:
+                    doc_boost = round(doc_kw_boost * 0.75, 4)  # 0.55->0.41, 0.30->0.23
+                    prob = min(prob + doc_boost, 1.0)
+                    kw_found = True
+                    kw_match = f"doc:{doc_kw_match}"
+                    kw_boost = doc_boost
+                    logger.info(f"Keyword boost (document chunk): '{doc_kw_match}' +{doc_boost:.2f} -> {prob:.4f}")
+                    break  # First hit is enough — stop scanning
 
         prob = round(prob, 4)
         action = (
@@ -408,7 +433,7 @@ def _make_canary_block_result(source: str, query: str) -> dict:
         "action": "hard_block",
         "confidence": 1.0,
         "hard_block": True,
-        "features": [1.0] * 10,
+        "features": [1.0] * 7,
         "keyword_boost_applied": False,
         "keyword_match": f"canary_token_leak:{source}",
         "keyword_boost": 0.0,
@@ -722,7 +747,7 @@ def run_pipeline(document: str,
     else:
         agg = meta_aggregator
     t0 = time.perf_counter()
-    meta = agg.predict(l1, l2, l3, query=query)
+    meta = agg.predict(l1, l2, l3, query=query, document=document, chunks=chunks)
     timings["meta_ms"] = round((time.perf_counter() - t0) * 1000, 2)
 
     # Determine which layer blocked

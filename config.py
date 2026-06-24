@@ -27,7 +27,7 @@ ENABLE_L1_EARLY_EXIT = True
 # ── Layer 2 — Intent Classifier ───────────────────────────────────────────────
 L2_BASE_MODEL              = "microsoft/deberta-v3-small"  # Smaller/faster base for fine-tune
 L2_FINETUNED_PATH          = str(_ROOT / "models" / "layer2_finetuned")  # Output of fine_tune_l2.py
-L2_USE_FINETUNED           = False  # Use fine-tuned model if available; falls back to pretrained
+L2_USE_FINETUNED           = False  # Fine-tuned model showed distribution shift on holdout (FPR 35.91% vs ~0%); use pretrained
 L2_STAGE1_THRESHOLD        = 0.60    # Query-level block threshold
 L2_DOC_SCAN_CHUNKS         = None    # Max document chunks to scan (None means scan all)
 L2_DOC_PATTERN_THRESHOLD   = 0.60    # Document pattern score to trigger block

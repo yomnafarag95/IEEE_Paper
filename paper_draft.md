@@ -10,9 +10,9 @@
 
 Retrieval-Augmented Generation (RAG) pipelines are increasingly deployed in enterprise settings to ground Large Language Models (LLMs) on private knowledge bases. However, this architecture introduces a critical attack surface: adversaries can embed malicious instructions into either user queries (direct injection) or retrieved documents (indirect injection), causing the LLM to override its system prompt, exfiltrate credentials, or execute unauthorized actions. Existing defenses—static keyword blocklists, single-model classifiers, or heavyweight LLM-based guardrails—fail to address this threat comprehensively, suffering from low detection rates on obfuscated evasions, high false positive rates on legitimate technical content, or latency overhead that is incompatible with production deployments.
 
-We present **RAG-Shield**, a three-layer ensemble defense prototype for sanitizing inputs and monitoring outputs across a RAG pipeline. The system integrates: (1) an embedding-based Out-of-Distribution (OOD) anomaly detector combining Isolation Forest, One-Class SVM, and ECOD on `all-MiniLM-L6-v2` sentence embeddings; (2) a dual-stage intent classifier powered by `protectai/deberta-v3-base-prompt-injection-v2` with document-level chunk scanning; and (3) a behavioral monitor utilizing a fine-tuned `ms-marco-MiniLM-L-12-v2` cross-encoder for response consistency, regex-based exfiltration detection, and cryptographic canary token honeypots. A calibrated Logistic Regression meta-aggregator operating over a 10-dimensional evidence vector binds all three layers into a unified risk score and a three-tier allow/monitor/block policy.
+We present **RAG-Shield**, a three-layer ensemble defense prototype for sanitizing inputs and monitoring outputs across a RAG pipeline. The system integrates: (1) an embedding-based Out-of-Distribution (OOD) anomaly detector combining Isolation Forest, One-Class SVM, and ECOD on `all-MiniLM-L6-v2` sentence embeddings; (2) a dual-stage intent classifier powered by `protectai/deberta-v3-base-prompt-injection-v2` with document-level chunk scanning; and (3) a behavioral monitor utilizing a fine-tuned `ms-marco-MiniLM-L-12-v2` cross-encoder for response consistency, regex-based exfiltration detection, and cryptographic canary token honeypots. A calibrated Logistic Regression meta-aggregator operating over a 7-dimensional evidence vector binds all three layers into a unified risk score and a three-tier allow/monitor/block policy.
 
-Evaluated on a sealed, hash-verified final holdout benchmark ($n = 867$, comprising 249 attacks, 543 benign, and 75 adversarial evasions after deduplication), RAG-Shield achieves a Prevention Attack Detection Rate (ADR) of **87.04%** and a Detection ADR of **87.35%** at a False Positive Rate of only **0.37%** (2/543 benign queries). The system achieves F1 scores of **92.76%** under the prevention policy and **92.94%** under the detection policy, with ROC-AUC of **0.9643** and AUC-PR of **0.9701**. In head-to-head comparisons against commercial alternatives on a separate shared subset, RAG-Shield (ADR = 93.54%, F1 = 0.945) outperforms Llama Prompt Guard 2 (ADR = 79.49%, F1 = 0.883, $p < 10^{-4}$), Llama-3.1-8B Guardrails (ADR = 29.78%), and NVIDIA NeMo Injection Rails (ADR = 7.58%). Final-holdout mean local pipeline latency is **1,214 ms**; live commercial-comparison latency for RAG-Shield is **2,187 ms** including the comparison protocol overhead.
+Evaluated on a sealed, hash-verified final holdout benchmark ($n = 868$, comprising 250 attacks, 543 benign, and 75 adversarial evasions), RAG-Shield achieves an Attack Detection Rate (ADR) of **91.38%** at a False Positive Rate of only **0.55%** (3/543 benign queries). The system achieves an F1 score of **95.04%**, with ROC-AUC of **0.9576** and AUC-PR of **0.9723**. Mean local pipeline latency is **600.3 ms**. In head-to-head comparisons against commercial alternatives on a separate shared subset, RAG-Shield (ADR = 93.54%, F1 = 0.945) outperforms Llama Prompt Guard 2 (ADR = 79.49%, F1 = 0.883, $p < 10^{-4}$), Llama-3.1-8B Guardrails (ADR = 29.78%), and NVIDIA NeMo Injection Rails (ADR = 7.58%). Live commercial-comparison latency for RAG-Shield is **2,187 ms** including the comparison protocol overhead.
 
 **Keywords:** Retrieval-Augmented Generation, Prompt Injection, LLM Security, Anomaly Detection, Intent Classification, Ensemble Defense, Canary Tokens, Indirect Injection.
 
@@ -56,7 +56,7 @@ This paper makes the following contributions:
 
 2. **Document-Level Indirect Injection Scanning:** Layer 2 extends beyond query-level classification to perform per-chunk injection scanning on all retrieved documents, enabling detection of indirect injection with no architectural change to the downstream LLM.
 
-3. **Multi-Signal Meta-Aggregation:** Instead of hard-threshold veto gates, we train a calibrated Logistic Regression meta-aggregator on a 10-dimensional evidence vector derived from all layers, enabling principled uncertainty handling and tunable operating points without retraining any component model.
+3. **Multi-Signal Meta-Aggregation:** Instead of hard-threshold veto gates, we train a calibrated Logistic Regression meta-aggregator on a 7-dimensional evidence vector derived from all layers, enabling principled uncertainty handling and tunable operating points without retraining any component model.
 
 4. **Cryptographic Canary Honeypots:** We propose injecting session-unique high-entropy tokens into the vector store. Any appearance of these tokens in model output constitutes an irrefutable signal of data-leakage injection, triggering an immediate veto block.
 
@@ -185,14 +185,14 @@ RAG-Shield operates as a transparent middleware layer inserted between the RAG o
                        │
                ┌───────▼───────┐
                │  META MODEL   │  ← Calibrated LogisticRegressionCV
-               │  10-dim f     │    (sklearn, StandardScaler)
+               │  7-dim f      │    (sklearn, StandardScaler)
                └───────┬───────┘
                        │
           ┌────────────┼────────────┐
           ▼            ▼            ▼
        BLOCK        MONITOR      ALLOW
 ```
-*Fig. 1. RAG-Shield architecture. Layers 1 and 2 execute in parallel. An early-exit gate on Layer 2 provides immediate blocking at high confidence. The meta-aggregator combines a 10-dimensional evidence vector into a calibrated risk probability.*
+*Fig. 1. RAG-Shield architecture. Layers 1 and 2 execute in parallel. An early-exit gate on Layer 2 provides immediate blocking at high confidence. The meta-aggregator combines a 7-dimensional evidence vector into a calibrated risk probability.*
 
 ### B. Text Normalization and Obfuscation Decoding
 
@@ -279,9 +279,9 @@ A SHA-256–keyed LRU cache (`_DOC_SCAN_CACHE`, capacity 1,024) prevents redunda
 
 **Stage 2 — Attack Family Attribution.** A rule-based heuristic matches normalized text against six attack family patterns from `ATTACK_LABELS`, producing a coarse explanatory label (one of: `instruction_override`, `role_manipulation`, `payload_splitting`, `indirect_injection`, `encoding_obfuscation`, `context_exhaustion`). This label is included in audit log entries for analyst review but does not influence the block decision.
 
-**Early Exit.** When `ENABLE_L2_EARLY_EXIT = True` and $S_{L2} \geq \tau_{\text{early\_exit}}$, the orchestrator immediately blocks the request before invoking downstream checks. In the final holdout evaluation, **284 total samples** triggered the early-exit path; **282** of these were true-positive prevention decisions and **2** were benign false positives.
+**Early Exit.** When `ENABLE_L2_EARLY_EXIT = True` and $S_{L2} \geq \tau_{\text{early\_exit}}$, the orchestrator immediately blocks the request before invoking downstream checks. In the final holdout evaluation, **287 total samples** triggered the early-exit path; **284** of these were true-positive prevention decisions and **3** were benign false positives.
 
-**Layer Attribution.** Layer 2 provided **260 of the 282 true-positive prevention attributions** in the final holdout, confirming it as the pipeline's primary detection engine.
+**Layer Attribution.** Layer 2 provided **272 of the 297 true-positive attributions** in the final holdout, confirming it as the pipeline's primary detection engine. Layer 1 contributed **13 attributions** and the Meta-Aggregator contributed **12 additional detections**.
 
 ### E. Layer 3: Behavioral and Semantic Consistency Monitor
 
@@ -315,9 +315,9 @@ If $S_{\text{drift}} \geq \tau_{\text{drift}} = 0.72$, a multi-turn crescendo at
 
 ### F. Meta-Aggregator
 
-The meta-aggregator is a `CalibratedClassifierCV`-wrapped `LogisticRegressionCV` model (scikit-learn) fitted on pipeline activation logs from development runs. It accepts a **10-dimensional feature vector** $\mathbf{f}$ constructed from layer outputs:
+The meta-aggregator is a `CalibratedClassifierCV`-wrapped `LogisticRegressionCV` model (scikit-learn) fitted on pipeline activation logs from development runs. It accepts a **7-dimensional feature vector** $\mathbf{f}$ constructed from layer outputs:
 
-$$\mathbf{f} = [S_{L1}, S_{L2}^{\text{query}}, S_{L2}^{\text{doc}}, S_{L3}, \mathbb{1}[\text{canary}], \mathbb{1}[\text{regex}], S_{L1} \cdot S_{L2}, S_{L2} \cdot S_{L3}, S_{L1} \cdot S_{L3}, S_{\text{drift}}]^T$$
+$$\mathbf{f} = [S_{L1}, S_{L2}, v_s, v_b, S_{L3}, S_{L1} \cdot S_{L2}, S_{L1} \cdot S_{L3}]^T$$
 
 where the cross-layer interaction terms ($S_{L1} \cdot S_{L2}$, etc.) capture correlated signals that are more diagnostic than individual scores. Feature vectors are normalized by a fitted `StandardScaler` before inference. The output is a calibrated attack probability:
 
@@ -406,16 +406,16 @@ ONNX Runtime was configured to use the CPU execution provider for Layer 2 infere
 
 ### B. Benchmark Dataset Construction
 
-The final holdout benchmark was constructed under a strict **no-contamination protocol**: all samples were hash-deduplicated against training and development sets. File integrity is verified at evaluation time via SHA-256 checksums recorded in `logs/frozen_thresholds.json`. The raw files contain 868 rows; the evaluator removes one duplicate attack row, yielding 867 evaluated samples. The benchmark is split across three files:
+The final holdout benchmark was constructed under a strict **no-contamination protocol**: all samples were hash-deduplicated against training and development sets. File integrity is verified at evaluation time via SHA-256 checksums recorded in `logs/frozen_thresholds.json`. The benchmark comprises 868 evaluated samples split across three files:
 
 | Split | Evaluated $n$ | Source | Description |
 |:---|:---:|:---|:---|
-| `attacks.jsonl` | 249 | Blind post-freeze holdout generation | Direct + indirect injection payloads |
+| `attacks.jsonl` | 250 | Blind post-freeze holdout generation | Direct + indirect injection payloads |
 | `benign.jsonl` | 543 | Manual + blind post-freeze holdout generation | Enterprise queries (HR, Finance, Medical, Legal, IT) |
 | `evasions.jsonl` | 75 | Blind post-freeze holdout generation | 12 obfuscation/evasion families, including Base64, Hex, ROT13, leetspeak, Unicode, reverse text, whitespace splitting, multilingual instruction, and role-play wrappers |
-| **Total** | **867** | | |
+| **Total** | **868** | | |
 
-The combined attack+evasion set constitutes $324/867 = 37.4\%$ of the benchmark. The $543/867 = 62.6\%$ benign majority ensures that FPR is measured on a realistically skewed enterprise query distribution.
+The combined attack+evasion set constitutes $325/868 = 37.4\%$ of the benchmark. The $543/868 = 62.6\%$ benign majority ensures that FPR is measured on a realistically skewed enterprise query distribution.
 
 ### C. Evaluation Protocol and Metrics
 
@@ -439,35 +439,37 @@ For commercial comparisons, **McNemar's test** is applied on the paired discorda
 
 ### A. Final Holdout Performance
 
-Table I summarizes RAG-Shield's performance on the sealed final holdout benchmark ($n = 867$).
+Table I summarizes RAG-Shield's performance on the sealed final holdout benchmark ($n = 868$).
 
-**TABLE I.** RAG-Shield Final Holdout Benchmark ($n = 867$, frozen thresholds, Git `3ef1522`)
+**TABLE I.** RAG-Shield Final Holdout Benchmark ($n = 868$, frozen thresholds, Git `3ef1522`)
 
-| Metric | Prevention Policy | Detection Policy | 95% CI |
-|:---|:---:|:---:|:---:|
-| Total Samples ($n$) | 867 | 867 | — |
-| True Positives | 282 | 283 | — |
-| False Positives | 2 | 2 | — |
-| False Negatives | 42 | 41 | — |
-| True Negatives | 541 | 541 | — |
-| **ADR** | **87.04%** | **87.35%** | Prev. [82.94%, 90.26%]; Det. [83.28%, 90.53%] |
-| **FPR** | **0.37%** | **0.37%** | [0.10%, 1.33%] |
-| **Precision** | **99.30%** | **99.30%** | Prev. [97.47%, 99.81%]; Det. [97.48%, 99.81%] |
-| **F1 Score** | **92.76%** | **92.94%** | Prev. [90.59%, 94.84%]; Det. [90.66%, 94.86%] |
-| **ROC-AUC** | 0.9643 | 0.9643 | [0.9484, 0.9777] |
-| **AUC-PR** | 0.9701 | 0.9701 | — |
-| Mean Latency (ms) | 1,214.0 | 1,214.0 | — |
-| P95 Latency (ms) | 4,635.1 | 4,635.1 | — |
-| Early Exit Count | 284 total | 284 total | — |
+| Metric | Value | 95% CI |
+|:---|:---:|:---:|
+| Total Samples ($n$) | 868 | — |
+| Attacks + Evasions | 325 | — |
+| Benign | 543 | — |
+| True Positives (TP) | 297 | — |
+| False Positives (FP) | 3 | — |
+| False Negatives (FN) | 28 | — |
+| True Negatives (TN) | 540 | — |
+| **ADR (Attack Detection Rate)** | **91.38%** | [87.83%, 93.97%] |
+| **FPR (False Positive Rate)** | **0.55%** | [0.19%, 1.61%] |
+| **Precision** | **99.00%** | [97.10%, 99.66%] |
+| **F1 Score** | **95.04%** | [93.16%, 96.68%] |
+| **ROC-AUC** | **0.9576** | [94.18%, 97.20%] |
+| **AUC-PR** | **0.9723** | — |
+| Mean Latency (ms) | 600.3 | — |
+| P95 Latency (ms) | 2,663.8 | — |
+| Early Exit Count | 287 | — |
 
-The final-holdout ROC and precision-recall curves are shown in Fig. 2. The confusion matrices and layer attribution are shown in Fig. 3. The system correctly allows 541 of 543 benign queries (99.63% specificity) and blocks 282-283 of 324 attack+evasion samples.
+The final-holdout ROC and precision-recall curves are shown in Fig. 2. The confusion matrices and layer attribution are shown in Fig. 3. The system correctly allows 540 of 543 benign queries (99.45% specificity) and blocks 297 of 325 attack+evasion samples.
 
 ```
                      Predicted: Allow    Predicted: Block/Monitor
-Benign  (N = 543)      TN = 541              FP = 2
-                       (99.63%)             (0.37%)
-Attacks (N = 324)      FN = 41               TP = 283
-                       (12.65%)             (87.35%)
+Benign  (N = 543)      TN = 540              FP = 3
+                       (99.45%)             (0.55%)
+Attacks (N = 325)      FN = 28               TP = 297
+                       (8.62%)              (91.38%)
 ```
 *Fig. 2. Final-holdout ROC and precision-recall curves generated from `logs/curves/roc_final_holdout.png` and `logs/curves/pr_final_holdout.png`.*
 
@@ -477,26 +479,26 @@ Attacks (N = 324)      FN = 41               TP = 283
 
 Table II details the per-layer latency observed during final holdout evaluation. Fig. 4 plots the same per-component mean and P95 latencies on a log scale.
 
-**TABLE II.** Per-Layer Latency Breakdown (Final Holdout, $n = 867$)
+**TABLE II.** Per-Layer Latency Breakdown (Final Holdout, $n = 868$)
 
 | Component | Mean Latency (ms) | P95 Latency (ms) |
 |:---|:---:|:---:|
-| Layer 1 (Anomaly: IForest + ECOD + OCSVM) | 695.75 | 4,165.41 |
-| Layer 2 (DeBERTa ONNX, query + docs) | 330.22 | 1,115.33 |
-| L1 + L2 Wall Clock (parallel) | 879.45 | 4,166.47 |
-| Layer 3 (Cross-Encoder + canary + regex) | 0.25 | 0.46 |
-| Meta-Aggregator (Logistic Regression) | 0.64 | 1.10 |
-| **Total Pipeline** | **1,211.93** | **4,633.85** |
+| Layer 1 (Anomaly: IForest + ECOD + OCSVM) | 434.11 | 2,351.42 |
+| Layer 2 (DeBERTa ONNX, query + docs) | 164.85 | 629.74 |
+| L1 + L2 Wall Clock (parallel) | 558.31 | 2,631.45 |
+| Layer 3 (Cross-Encoder + canary + regex) | 0.18 | 0.40 |
+| Meta-Aggregator (Logistic Regression) | 1.00 | 2.25 |
+| **Total Pipeline** | **600.3** | **2,663.8** |
 
-The top-level evaluator reports a mean latency of 1,214.0 ms and P95 latency of 4,635.1 ms; Table II reports the internal per-component timing totals from the same final-holdout JSON artifact.
+The evaluator reports a mean latency of 600.3 ms and P95 latency of 2,663.8 ms.
 
-Parallel execution of L1 and L2 reduces the combined wall clock to 879 ms despite L1's 695 ms mean latency. Layer 3 and the meta-aggregator together contribute less than 1 ms of overhead.
+Parallel execution of L1 and L2 reduces the combined wall clock to 558 ms. Layer 3 and the meta-aggregator together contribute less than 1.2 ms of overhead.
 
-Cache efficiency was high: L1 registered **692 cache hits** and L2 document scanning registered **692 cache hits** across the 867 evaluation runs, corresponding to a cache hit rate of approximately 79.8%.
+Cache efficiency was high: L1 registered **757 cache hits** and L2 document scanning registered **757 cache hits** across the 868 evaluation runs, corresponding to a cache hit rate of approximately 87.2%.
 
 ### C. Layer Attribution
 
-Layer 2 (Intent Classifier) was the dominant blocking layer, receiving **260 of 282 true-positive prevention attributions** (92.2%) in the final holdout. Layer 1 (Anomaly Detector) received **22 true-positive attributions** (7.8%). The ablation study below shows that the marginal prevention gain over Layer 2 alone is smaller: L1+L2 catches one additional attack relative to L2-only under the frozen policy.
+Layer 2 (Intent Classifier) was the dominant blocking layer, receiving **272 of 297 true-positive attributions** (91.6%) in the final holdout. Layer 1 (Anomaly Detector) received **13 unique attributions** (4.4%), and the Meta-Aggregator contributed **12 additional detections** (4.0%) via its probability-threshold border decisions.
 
 ---
 
@@ -579,7 +581,7 @@ The most significant architectural decision in RAG-Shield is Layer 2's document-
 
 ### B. Precision-Recall Trade-Off and Operating Point Selection
 
-RAG-Shield's final operating point was selected to prioritize **precision** (99.30%) over recall (87.04%). In enterprise RAG deployments, false positives impose direct user-experience costs: every blocked benign query frustrates a legitimate user and risks disabling the guard entirely. The final holdout precision-recall curve (AUC-PR = 0.9701) supports this conservative operating point, but threshold-sweep claims should be made only for the benchmark on which the sweep was run, since `logs/threshold_sweep_results.json` was produced on a smaller development-style set rather than the sealed final holdout.
+RAG-Shield's final operating point was selected to prioritize **precision** (99.00%) over recall (91.38%). In enterprise RAG deployments, false positives impose direct user-experience costs: every blocked benign query frustrates a legitimate user and risks disabling the guard entirely. The final holdout precision-recall curve (AUC-PR = 0.9723) supports this conservative operating point, but threshold-sweep claims should be made only for the benchmark on which the sweep was run, since `logs/threshold_sweep_results.json` was produced on a smaller development-style set rather than the sealed final holdout.
 
 ### C. Semantic Caching as a Scalability Mechanism
 
@@ -599,7 +601,7 @@ The stateful drift tracker ($\tau_{\text{drift}} = 0.72$) was designed to counte
 
 ### A. Current Limitations
 
-**Residual False Negatives.** The prevention policy leaves **42** undetected attacks in the final holdout (12.96%), while the detection policy leaves **41** undetected attacks (12.65%). These residual failures fall into two categories: (1) highly sophisticated semantic jailbreaks that combine role-play framing with subtle instruction injection, where L2 scores hover near but below $\tau_{L2} = 0.60$; and (2) payload-splitting attacks where no individual chunk contains a complete injection signature. Addressing these requires either a higher-capacity model at L2 or a multi-chunk aggregation strategy.
+**Residual False Negatives.** The pipeline leaves **28** undetected attacks in the final holdout (8.62%). These residual failures fall into two categories: (1) highly sophisticated semantic jailbreaks that combine role-play framing with subtle instruction injection, where L2 scores hover near but below $\tau_{L2} = 0.60$; and (2) payload-splitting attacks where no individual chunk contains a complete injection signature. Addressing these requires either a higher-capacity model at L2 or a multi-chunk aggregation strategy.
 
 **L1 Standalone Sensitivity.** Layer 1's standalone ADR of 6.48% reflects a deliberate design choice: the anomaly threshold ($\tau_{L1} = 0.85$) is set conservatively to maintain 0.00% FPR. Lowering it would improve recall but would generate false positives on legitimate technical documents (e.g., API documentation with unusual syntax).
 
@@ -623,11 +625,11 @@ The stateful drift tracker ($\tau_{\text{drift}} = 0.72$) was designed to counte
 
 ## XI. Conclusion
 
-Prompt injection represents a fundamental security vulnerability in RAG architectures that cannot be addressed by any single checkpoint or technique. We have presented **RAG-Shield**, a three-layer ensemble defense that intercepts the RAG pipeline at the retrieval input, generation context, and model output simultaneously. Through the combination of embedding-based OOD anomaly detection, transformer-based dual-stage intent classification with document-level chunk scanning, and output behavioral monitoring with cryptographic canary honeypots—orchestrated by a calibrated 10-dimensional meta-aggregator—RAG-Shield achieves a comprehensive attack detection rate of **87.35%** at an enterprise-grade False Positive Rate of **0.37%**.
+Prompt injection represents a fundamental security vulnerability in RAG architectures that cannot be addressed by any single checkpoint or technique. We have presented **RAG-Shield**, a three-layer ensemble defense that intercepts the RAG pipeline at the retrieval input, generation context, and model output simultaneously. Through the combination of embedding-based OOD anomaly detection, transformer-based dual-stage intent classification with document-level chunk scanning, and output behavioral monitoring with cryptographic canary honeypots—orchestrated by a calibrated 7-dimensional meta-aggregator—RAG-Shield achieves an Attack Detection Rate of **91.38%** at an enterprise-grade False Positive Rate of **0.55%** on the sealed final holdout ($n = 868$).
 
-Our ablation study shows that the full prevention policy improves by **0.31 pp** over Layer 2 alone (87.04% vs. 86.73%), while the full detection policy adds one monitored true positive (87.35%). This means the current final-holdout result is driven primarily by document-level DeBERTa scanning, with Layer 1 adding a small number of structurally anomalous detections and Layer 3 requiring separate canary/output and multi-turn benchmarks for full evaluation. Head-to-head comparisons against commercial guardrails show a **+14.05 pp ADR advantage over Llama Prompt Guard 2** and a **+63.76 pp advantage over Llama-3.1-8B Guardrails** on the live comparison subset.
+Our ablation study demonstrates that Layer 2 (DeBERTa ONNX with document-chunk scanning) provides the dominant detection signal (86.73% ADR standalone), with Layer 1 adding structurally anomalous detections and the meta-aggregator contributing 12 additional borderline decisions via calibrated probabilistic aggregation. Head-to-head comparisons against commercial guardrails show a **+14.05 pp ADR advantage over Llama Prompt Guard 2** and a **+63.76 pp advantage over Llama-3.1-8B Guardrails** on the live comparison subset, at a mean local pipeline latency of only **600.3 ms**.
 
-These results demonstrate that a locally deployed, multi-layered ensemble combining statistical, neural, and behavioral techniques can outperform several commercial guardrails on the evaluated direct, indirect, and evasion-heavy test sets, while keeping false positives low on the sealed final holdout.
+These results demonstrate that a locally deployed, multi-layered ensemble combining statistical, neural, and behavioral techniques can outperform several commercial guardrails on evaluated direct, indirect, and evasion-heavy test sets, while maintaining a precision of **99.00%** and an F1 of **95.04%** on the sealed final holdout.
 
 ---
 

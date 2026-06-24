@@ -10,7 +10,7 @@ retrieved documents (poisoned FAQ entries, injected web pages, etc.).
 The attacker's goal: the RAG pipeline retrieves a poisoned chunk and
 the LLM executes the embedded instruction without the user's knowledge.
 
-This module implements two complementary defences:
+This module implements two complementary defenses:
 
   1. Canary Document Generation & Injection
      - Generates plausible-looking knowledge-base documents that contain

@@ -25,6 +25,11 @@ Usage
   python eval_suite.py --mode adversarial
   python eval_suite.py --mode all
 """
+# Import onnxruntime first to avoid OpenMP DLL conflict on Windows
+try:
+    import onnxruntime as _ort
+except ImportError:
+    pass
 
 import json
 import time

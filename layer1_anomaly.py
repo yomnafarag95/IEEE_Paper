@@ -150,7 +150,7 @@ class EnsembleDetector:
     IsolationForest — tree-based global outlier detection
     OneClassSVM     — margin-based one-class classifier (subsampled for speed)
 
-    Scores are min-max normalised per detector then averaged.
+    Scores are min-max normalized per detector then averaged.
     """
 
     def __init__(self):
@@ -363,7 +363,7 @@ class AnomalyDetector:
         )
         blocked = max_score > self.detector.threshold
 
-        # Confidence: distance from threshold, normalised to [0, 1]
+        # Confidence: distance from threshold, normalized to [0, 1]
         confidence = round(min(abs(max_score - self.detector.threshold) * 2, 1.0), 4)
 
         logger.info(

@@ -1,7 +1,7 @@
 """
 ablation_study.py
 ─────────────────
-Ablation study for RAG-Shield — optimised runtime version.
+Ablation study for RAG-Shield — optimized runtime version.
 
 Benign evaluation strategy
 ───────────────────────────
@@ -28,6 +28,12 @@ Usage
 ─────
   python ablation_study.py
 """
+
+# Import onnxruntime first to avoid OpenMP DLL conflict on Windows
+try:
+    import onnxruntime as _ort
+except ImportError:
+    pass
 
 import json
 import time
@@ -159,8 +165,34 @@ def _run_ablation(document: str,
 # Data loaders
 # ─────────────────────────────────────────────────────────────────────────────
 
-def _load_attack_samples() -> list[dict]:
+def _load_attack_samples(final_holdout: bool = False) -> list[dict]:
     samples = []
+    if final_holdout:
+        atk_path = Path("data/final_holdout/attacks.jsonl")
+        eva_path = Path("data/final_holdout/evasions.jsonl")
+        for p in (atk_path, eva_path):
+            if p.exists():
+                count = 0
+                with open(p, encoding="utf-8") as f:
+                    for line in f:
+                        try:
+                            row = json.loads(line)
+                        except json.JSONDecodeError:
+                            continue
+                        text = _clean_text(row.get("text") or row.get("query") or row.get("prompt") or "")
+                        if _valid_eval_text(text):
+                            samples.append({
+                                "text":        text,
+                                "label":       1,
+                                "attack_type": row.get("attack_type") or row.get("type") or row.get("category") or "unknown",
+                            })
+                            count += 1
+                print(f"  {p.name:<14} : {count} samples")
+            else:
+                print(f"  [warn] {p} not found")
+        print(f"  Total attacks : {len(samples)}")
+        return samples
+
 
     # InjecAgent
     ia_path = Path("data/injecagent.jsonl")
@@ -221,8 +253,27 @@ def _load_attack_samples() -> list[dict]:
     return samples
 
 
-def _load_benign_samples() -> list[dict]:
+def _load_benign_samples(final_holdout: bool = False) -> list[dict]:
     samples = []
+    if final_holdout:
+        ben_path = Path("data/final_holdout/benign.jsonl")
+        if ben_path.exists():
+            count = 0
+            with open(ben_path, encoding="utf-8") as f:
+                for line in f:
+                    try:
+                        row = json.loads(line)
+                    except json.JSONDecodeError:
+                        continue
+                    text = _clean_text(row.get("text") or row.get("query") or row.get("prompt") or "")
+                    if _valid_eval_text(text):
+                        samples.append({"text": text, "label": 0})
+                        count += 1
+            print(f"  Benign        : {len(samples)} samples")
+        else:
+            print(f"  [warn] {ben_path} not found")
+        return samples
+
     ext_path = Path("data/extended_benign.csv")
     if ext_path.exists():
         import pandas as pd
@@ -247,15 +298,22 @@ def _run_config(samples: list[dict],
                 l3_monitor,
                 meta_aggregator,
                 mode: str,
-                tag: str) -> tuple[list, list]:
-    """Returns (y_true, y_pred)."""
+                tag: str) -> tuple[list, list, list]:
+    """
+    Returns (y_true, y_pred, latency_ms_list).
 
-    y_true, y_pred = [], []
+    Each call to _run_ablation is individually timed with
+    time.perf_counter() so mean/P95 latency is accurate
+    per ablation configuration (not a stale global figure).
+    """
+
+    y_true, y_pred, latencies = [], [], []
     t_start = time.time()
     n = len(samples)
 
     for i, sample in enumerate(samples, 1):
-        text   = sample["text"]
+        text = sample["text"]
+        t0   = time.perf_counter()
         result = _run_ablation(
             document        = text,
             query           = text[:200],
@@ -266,6 +324,7 @@ def _run_config(samples: list[dict],
             meta_aggregator = meta_aggregator,
             mode            = mode,
         )
+        latencies.append((time.perf_counter() - t0) * 1000)
         predicted = 1 if _is_detected(result.get("action", "allow")) else 0
         y_true.append(sample["label"])
         y_pred.append(predicted)
@@ -277,7 +336,7 @@ def _run_config(samples: list[dict],
             print(f"    [{tag}] {i}/{n}  "
                   f"elapsed={elapsed:.0f}s  ETA={eta:.0f}s")
 
-    return y_true, y_pred
+    return y_true, y_pred, latencies
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -285,9 +344,11 @@ def _run_config(samples: list[dict],
 # ─────────────────────────────────────────────────────────────────────────────
 
 def _compute_row(yt_atk: list, yp_atk: list,
-                 fp: int, tn: int) -> dict:
+                 fp: int, tn: int,
+                 latencies: list[float] | None = None) -> dict:
     """
     Combine attack predictions with known FP/TN from benign.
+    Optionally include per-sample latency_ms list for mean/P95.
     """
     tp = sum(1 for t, p in zip(yt_atk, yp_atk) if t == 1 and p == 1)
     fn = sum(1 for t, p in zip(yt_atk, yp_atk) if t == 1 and p == 0)
@@ -297,7 +358,7 @@ def _compute_row(yt_atk: list, yp_atk: list,
     prec = tp / max(tp + fp, 1)
     f1   = (2 * adr * prec) / max(adr + prec, 1e-8)
 
-    return {
+    row: dict = {
         "ADR":  round(adr,  4),
         "FPR":  round(fpr,  4),
         "Prec": round(prec, 4),
@@ -308,28 +369,61 @@ def _compute_row(yt_atk: list, yp_atk: list,
         "FN":   fn,
     }
 
+    if latencies:
+        arr = np.asarray(latencies)
+        row["mean_latency_ms"] = round(float(np.mean(arr)), 2)
+        row["p95_latency_ms"]  = round(float(np.percentile(arr, 95)), 2)
+
+    return row
+
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Main
 # ─────────────────────────────────────────────────────────────────────────────
 
 if __name__ == "__main__":
+    import argparse
+    parser = argparse.ArgumentParser(description="Ablation study for RAG-Shield")
+    parser.add_argument("--final-holdout", action="store_true", help="Run ablation on final holdout data")
+    parser.add_argument("--full-benign", action="store_true", help="Run benign evaluation on all configurations (no shortcuts)")
+    args = parser.parse_args()
+
     print("\n=== RAG-Shield Ablation Study ===")
-    print("    Optimised: benign skipped for L3-only and Full pipeline")
-    print(f"    Using main-eval FPR={MAIN_EVAL_FPR} "
-          f"(FP={MAIN_EVAL_FP}, TN={MAIN_EVAL_TN}) for those configs\n")
+    if args.final_holdout:
+        print("    Running in FINAL HOLDOUT mode (full benign evaluation enabled)")
+    elif args.full_benign:
+        print("    Running with FULL BENIGN evaluation (no configuration shortcuts)")
+    else:
+        print("    Optimized: benign skipped for L3-only and Full pipeline")
+        print(f"    Using main-eval FPR={MAIN_EVAL_FPR} "
+              f"(FP={MAIN_EVAL_FP}, TN={MAIN_EVAL_TN}) for those configs\n")
 
     # ── Load components ───────────────────────────────────────────────────────
     print("Loading pipeline components ...")
     l1  = load_detector()
     l2  = load_classifier()
     l3  = load_monitor()
-    agg = MetaAggregator.load()
+    
+    try:
+        agg = MetaAggregator.load()
+    except Exception as e:
+        print(f"  [warn] Could not load MetaAggregator: {e}")
+        print("  Please make sure you train the meta aggregator first: python train_meta_aggregator.py")
+        agg = None
 
     # ── Load data ─────────────────────────────────────────────────────────────
     print("\nLoading evaluation data ...")
-    attack_samples = _load_attack_samples()
-    benign_samples = _load_benign_samples()
+    if args.final_holdout:
+        if not (Path("data/final_holdout/attacks.jsonl").exists() and 
+                Path("data/final_holdout/benign.jsonl").exists() and 
+                Path("data/final_holdout/evasions.jsonl").exists()):
+            print("\nError: Final holdout files are missing from data/final_holdout/")
+            print("Please make sure data/final_holdout/attacks.jsonl, benign.jsonl, and evasions.jsonl exist.")
+            import sys
+            sys.exit(1)
+
+    attack_samples = _load_attack_samples(final_holdout=args.final_holdout)
+    benign_samples = _load_benign_samples(final_holdout=args.final_holdout)
 
     # ─────────────────────────────────────────────────────────────────────────
     # Configurations
@@ -339,10 +433,14 @@ if __name__ == "__main__":
     configs = [
         ("l1_only",  "L1 only  (Anomaly Detection)",     True),
         ("l2_only",  "L2 only  (Intent Classifier)",     True),
-        ("l3_only",  "L3 only  (Semantic Monitor)",      False),
+        ("l3_only",  "L3 only  (Semantic Monitor)",      args.full_benign or args.final_holdout),
         ("l1_l2_or", "L1+L2   (OR-logic union)",         True),
-        ("full",     "Full     (meta-aggregator)",        False),
+        ("full",     "Full     (meta-aggregator)",        args.full_benign or args.final_holdout),
     ]
+
+    # Per-config TP index sets, used later for unique-TP attribution.
+    # Index = position in attack_samples list.
+    config_tp_sets: dict[str, set[int]] = {}
 
     results = {}
     total_start = time.time()
@@ -352,34 +450,76 @@ if __name__ == "__main__":
         print(f"  Config : {desc}")
         print(f"{'-'*60}")
 
-        # Attack samples — always run
+        # Attack samples — always run; capture per-sample latencies
         print(f"  Running attacks ({len(attack_samples)} samples) ...")
-        yt_atk, yp_atk = _run_config(
+        yt_atk, yp_atk, lat_atk = _run_config(
             attack_samples, l1, l2, l3, agg, mode, "ATK"
         )
 
-        # Benign samples — conditional
+        # Record which attack indices are TPs for this config
+        tp_indices = {
+            i for i, (t, p) in enumerate(zip(yt_atk, yp_atk))
+            if t == 1 and p == 1
+        }
+        config_tp_sets[desc] = tp_indices
+
+        # Benign samples — conditional; merge latencies for overall mean/P95
         if run_benign and benign_samples:
             print(f"  Running benign ({len(benign_samples)} samples) ...")
-            yt_ben, yp_ben = _run_config(
+            yt_ben, yp_ben, lat_ben = _run_config(
                 benign_samples, l1, l2, l3, agg, mode, "BEN"
             )
             fp = sum(1 for t, p in zip(yt_ben, yp_ben) if t == 0 and p == 1)
             tn = sum(1 for t, p in zip(yt_ben, yp_ben) if t == 0 and p == 0)
             benign_note = f"measured (n={len(benign_samples)})"
+            all_latencies = lat_atk + lat_ben
         else:
             fp = MAIN_EVAL_FP
             tn = MAIN_EVAL_TN
             benign_note = f"from main eval (FP={fp}, TN={tn})"
             print(f"  Benign : skipped — using {benign_note}")
+            all_latencies = lat_atk
 
-        row = _compute_row(yt_atk, yp_atk, fp, tn)
-        results[desc] = {"metrics": row, "benign_note": benign_note}
+        row = _compute_row(yt_atk, yp_atk, fp, tn, latencies=all_latencies)
 
+        entry: dict = {
+            "metrics":     row,
+            "benign_note": benign_note,
+        }
+
+        # Issue 2 fix: make L3's structural dependency on LLM output explicit
+        if mode == "l3_only":
+            entry["l3_condition_note"] = (
+                "L3 only fires on the generated LLM response. "
+                "ADR here is conditional on the LLM being invoked for all "
+                "samples; in a live pipeline, attacks blocked by L1/L2 never "
+                "reach L3. This figure is NOT L3's standalone recall."
+            )
+
+        results[desc] = entry
+
+        _fmt_lat = lambda v: f"{v:.1f}" if isinstance(v, (int, float)) else str(v)
         print(f"\n  Result : ADR={row['ADR']:.4f}  FPR={row['FPR']:.4f}  "
               f"F1={row['F1']:.4f}  "
               f"TP={row['TP']}  FP={row['FP']}  "
-              f"TN={row['TN']}  FN={row['FN']}")
+              f"TN={row['TN']}  FN={row['FN']}  "
+              f"mean_lat={_fmt_lat(row.get('mean_latency_ms', 'n/a'))}ms  "
+              f"p95_lat={_fmt_lat(row.get('p95_latency_ms', 'n/a'))}ms")
+
+    # ── Issue 3 fix: compute unique TP attribution per config ─────────────────
+    # A TP is "unique" to a config if no other config catches that same sample.
+    union_tp_indices: set[int] = set()
+    for s in config_tp_sets.values():
+        union_tp_indices |= s
+
+    for desc, tp_set in config_tp_sets.items():
+        other_union = set()
+        for other_desc, other_set in config_tp_sets.items():
+            if other_desc != desc:
+                other_union |= other_set
+        unique_indices = sorted(tp_set - other_union)
+        results[desc]["unique_tp_count"]      = len(unique_indices)
+        results[desc]["unique_tp_sample_ids"] = unique_indices
 
     total_elapsed = time.time() - total_start
 
@@ -407,7 +547,8 @@ if __name__ == "__main__":
     print(f"\n  Total runtime : {total_elapsed/60:.1f} minutes")
 
     # ── Save ──────────────────────────────────────────────────────────────────
-    out_path = Path("logs/ablation_results.json")
+    out_name = "ablation_results_final_holdout.json" if args.final_holdout else "ablation_results.json"
+    out_path = Path("logs") / out_name
     out_path.parent.mkdir(exist_ok=True)
     with open(out_path, "w", encoding="utf-8") as f:
         json.dump(results, f, indent=2)

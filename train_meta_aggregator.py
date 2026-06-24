@@ -24,13 +24,18 @@ EVAL_PATH   = "data/benign_queries.jsonl"
 MODEL_OUT   = "models/meta_aggregator.pkl"
 SCALER_OUT  = "models/meta_scaler.pkl"
 
-# CRITICAL: This order MUST match orchestrator.py _features() exactly:
-#   [l1_max, l1_win, l1_full, l2_stage1, l2_consist, l3_schema, l3_bound, l3_consist, l1xl2, l1xl3]
+# CRITICAL: This order MUST match orchestrator.py _features() exactly.
+# v2 (7-feature set): removed r1_win, r1_full (multicollinear with r1_max),
+# and r2_cs (L2 word-overlap consistency — spuriously high for any out-of-domain
+# benign query, causing false positives when paired with moderate r1_max values).
 FEATURE_COLS = [
-    'r1_max', 'r1_win', 'r1_full',
-    'r2',     'r2_cs',   # r2=l2_stage1_prob at pos3, r2_cs=l2_consistency at pos4
-    'v_sch', 'v_bnd',
-    'r3', 'r1r2', 'r1r3'
+    'r1_max',             # L1 anomaly max score
+    'r2',                 # L2 stage1 DeBERTa injection probability
+    'v_sch',              # L3 schema violation (0/1)
+    'v_bnd',              # L3 boundary violations (normalized)
+    'r3',                 # L3 consistency score
+    'r1r2',               # L1 x L2 interaction
+    'r1r3',               # L1 x L3 interaction
 ]
 
 # ── Contamination check ───────────────────────────────────────────────
@@ -295,17 +300,15 @@ def collect_real_training_logs():
         l1_res = detector.scan(chunks)
         l2_res = classifier.classify(query_text, chunks)
         l3_res = monitor.check(query_text, sys_prompt, chunks, l1_res, l2_res)
+        # 7-feature set (v2) — must match FEATURE_COLS and orchestrator._features() exactly.
         return {
             'r1_max':  l1_res["max_score"],
-            'r1_win':  max(l1_res["window_scores"], default=0.0),
-            'r1_full': l1_res["full_score"],
-            'r2_cs':   l2_res["consistency_score"],
             'r2':      l2_res["stage1_prob"],
             'v_sch':   0.0 if l3_res["schema_valid"] else 1.0,
             'v_bnd':   min(len(l3_res["boundary_violations"]) / 2.0, 1.0),
             'r3':      l3_res["consistency_score"],
             'r1r2':    l1_res["max_score"] * l2_res["stage1_prob"],
-            'r1r3':    l1_res["full_score"] * l3_res["consistency_score"],
+            'r1r3':    l1_res["max_score"] * l3_res["consistency_score"],
         }
 
     # Helper function to run features
@@ -423,15 +426,26 @@ def train_meta_aggregator(df):
     )
     print(f"[meta] CV AUC: {cv_scores.mean():.4f} +/- {cv_scores.std():.4f}")
 
-    # Final fit on all data
+    # Final fit on all data — must be fitted before wrapping
     base_clf.fit(X_scaled, y)
+    print(f"[meta] LogisticRegressionCV best C: {base_clf.C_[0]:.6f}")
+
+    # IEEE Fix #4 — Wrap in CalibratedClassifierCV (cv='prefit') so that
+    # predict_proba returns isotonic-regression-calibrated probabilities.
+    # This matches the paper description ("calibrated LogisticRegressionCV")
+    # and orchestrator.py's MetaAggregator class documentation.
+    # cv='prefit' uses the already-fitted base_clf as the estimator and
+    # calibrates its probability outputs on the same training set.
+    calibrated_clf = CalibratedClassifierCV(base_clf, cv='prefit', method='isotonic')
+    calibrated_clf.fit(X_scaled, y)
+    print("[meta] CalibratedClassifierCV (isotonic, prefit) fitted.")
 
     os.makedirs('models', exist_ok=True)
-    joblib.dump(base_clf, MODEL_OUT)
-    joblib.dump(scaler,   SCALER_OUT)
-    print(f"[meta] Meta-aggregator saved to {MODEL_OUT}")
+    joblib.dump(calibrated_clf, MODEL_OUT)
+    joblib.dump(scaler,         SCALER_OUT)
+    print(f"[meta] Calibrated meta-aggregator saved to {MODEL_OUT}")
     print(f"[meta] Scaler saved to {SCALER_OUT}")
-    return base_clf, scaler
+    return calibrated_clf, scaler
 
 
 # ── Main ──────────────────────────────────────────────────────────────
