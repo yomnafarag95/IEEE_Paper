@@ -11,10 +11,11 @@ import numpy as np
 import pandas as pd
 from sklearn.linear_model import LogisticRegressionCV
 from sklearn.calibration import CalibratedClassifierCV
-from sklearn.model_selection import StratifiedKFold, cross_val_score
+from sklearn.model_selection import StratifiedKFold
 from sklearn.preprocessing import StandardScaler
 from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.metrics.pairwise import cosine_similarity
+from sklearn.metrics import accuracy_score, roc_auc_score
 import joblib
 from split_helper import get_split
 
@@ -23,6 +24,7 @@ LOGS_PATH   = "logs/pipeline_logs.jsonl"
 EVAL_PATH   = "data/benign_queries.jsonl"
 MODEL_OUT   = "models/meta_aggregator.pkl"
 SCALER_OUT  = "models/meta_scaler.pkl"
+REPORT_OUT  = "logs/meta_aggregator_cv_report.json"
 
 # CRITICAL: This order MUST match orchestrator.py _features() exactly.
 # v2 (7-feature set): removed r1_win, r1_full (multicollinear with r1_max),
@@ -386,7 +388,7 @@ def load_eval_queries(path=None):
 
 
 # ── Train ─────────────────────────────────────────────────────────────
-def train_meta_aggregator(df):
+def _train_meta_aggregator_legacy_same_set_calibration(df):
     # Check required columns exist
     missing = [c for c in FEATURE_COLS if c not in df.columns]
     if missing:
@@ -449,6 +451,140 @@ def train_meta_aggregator(df):
 
 
 # ── Main ──────────────────────────────────────────────────────────────
+def train_meta_aggregator(df):
+    missing = [c for c in FEATURE_COLS if c not in df.columns]
+    if missing:
+        print(f"[meta] Missing feature columns: {missing}")
+        print("[meta] Available columns:", df.columns.tolist())
+        if 'label' not in df.columns:
+            raise ValueError("No 'label' column found in logs.")
+        feature_cols = [c for c in FEATURE_COLS if c in df.columns]
+        print(f"[meta] Using available features: {feature_cols}")
+    else:
+        feature_cols = FEATURE_COLS
+
+    X = df[feature_cols].fillna(0).values
+    label_col = 'label' if 'label' in df.columns else 'confirmed_attack'
+    y = df[label_col].values.astype(int)
+
+    print(f"[meta] Training set: {(y==1).sum()} attacks, {(y==0).sum()} benign")
+
+    def make_base(seed=42):
+        return LogisticRegressionCV(
+            Cs=10,
+            cv=5,
+            max_iter=1000,
+            class_weight='balanced',
+            random_state=seed,
+            scoring='neg_log_loss',
+        )
+
+    outer_cv = StratifiedKFold(5, shuffle=True, random_state=42)
+    fold_reports = []
+    coef_rows = []
+    intercepts = []
+
+    print("[meta] Running 5-fold CV audit for accuracy, AUC, and coefficient stability...")
+    for fold_id, (train_idx, test_idx) in enumerate(outer_cv.split(X, y), start=1):
+        fold_scaler = StandardScaler()
+        X_train = fold_scaler.fit_transform(X[train_idx])
+        X_test = fold_scaler.transform(X[test_idx])
+        y_train = y[train_idx]
+        y_test = y[test_idx]
+
+        fold_clf = make_base(seed=42 + fold_id)
+        fold_clf.fit(X_train, y_train)
+        y_prob = fold_clf.predict_proba(X_test)[:, 1]
+        y_pred = (y_prob >= 0.5).astype(int)
+
+        fold_acc = float(accuracy_score(y_test, y_pred))
+        fold_auc = float(roc_auc_score(y_test, y_prob))
+        fold_reports.append({
+            "fold": fold_id,
+            "n_train": int(len(train_idx)),
+            "n_test": int(len(test_idx)),
+            "accuracy": round(fold_acc, 4),
+            "roc_auc": round(fold_auc, 4),
+            "best_C": float(fold_clf.C_[0]),
+        })
+        coef_rows.append(fold_clf.coef_[0].astype(float))
+        intercepts.append(float(fold_clf.intercept_[0]))
+        print(
+            f"[meta] Fold {fold_id}: "
+            f"accuracy={fold_acc:.4f}, AUC={fold_auc:.4f}, C={fold_clf.C_[0]:.6f}"
+        )
+
+    coef_matrix = np.vstack(coef_rows)
+    coef_mean = coef_matrix.mean(axis=0)
+    coef_std = coef_matrix.std(axis=0, ddof=1)
+    acc_values = np.array([r["accuracy"] for r in fold_reports], dtype=float)
+    auc_values = np.array([r["roc_auc"] for r in fold_reports], dtype=float)
+
+    print(f"[meta] CV accuracy: {acc_values.mean():.4f} +/- {acc_values.std(ddof=1):.4f}")
+    print(f"[meta] CV AUC: {auc_values.mean():.4f} +/- {auc_values.std(ddof=1):.4f}")
+    print("[meta] Coefficient stability (mean +/- std across folds):")
+    coef_report = []
+    for name, mean_val, std_val in zip(feature_cols, coef_mean, coef_std):
+        row = {
+            "feature": name,
+            "coef_mean": round(float(mean_val), 6),
+            "coef_std": round(float(std_val), 6),
+        }
+        coef_report.append(row)
+        print(f"  {name:<8} {mean_val:+.6f} +/- {std_val:.6f}")
+
+    scaler = StandardScaler()
+    X_scaled = scaler.fit_transform(X)
+    calibrated_clf = CalibratedClassifierCV(
+        estimator=make_base(seed=42),
+        cv=StratifiedKFold(5, shuffle=True, random_state=4242),
+        method='isotonic',
+    )
+    calibrated_clf.fit(X_scaled, y)
+    print("[meta] CalibratedClassifierCV (isotonic, 5-fold CV) fitted.")
+
+    report = {
+        "description": (
+            "Meta-aggregator audit using 5-fold outer CV on training features. "
+            "The saved production model uses 5-fold isotonic calibration, not "
+            "same-set prefit calibration."
+        ),
+        "n_samples": int(len(y)),
+        "n_attacks": int((y == 1).sum()),
+        "n_benign": int((y == 0).sum()),
+        "feature_columns": list(feature_cols),
+        "cv": {
+            "n_splits": 5,
+            "shuffle": True,
+            "random_state": 42,
+            "accuracy_mean": round(float(acc_values.mean()), 4),
+            "accuracy_std": round(float(acc_values.std(ddof=1)), 4),
+            "roc_auc_mean": round(float(auc_values.mean()), 4),
+            "roc_auc_std": round(float(auc_values.std(ddof=1)), 4),
+            "folds": fold_reports,
+        },
+        "coefficient_stability": coef_report,
+        "intercept_mean": round(float(np.mean(intercepts)), 6),
+        "intercept_std": round(float(np.std(intercepts, ddof=1)), 6),
+        "production_calibration": {
+            "method": "isotonic",
+            "cv_splits": 5,
+            "same_set_prefit_calibration": False,
+        },
+    }
+
+    os.makedirs('models', exist_ok=True)
+    os.makedirs('logs', exist_ok=True)
+    joblib.dump(calibrated_clf, MODEL_OUT)
+    joblib.dump(scaler, SCALER_OUT)
+    with open(REPORT_OUT, "w", encoding="utf-8") as f:
+        json.dump(report, f, indent=2)
+    print(f"[meta] Calibrated meta-aggregator saved to {MODEL_OUT}")
+    print(f"[meta] Scaler saved to {SCALER_OUT}")
+    print(f"[meta] CV report saved to {REPORT_OUT}")
+    return calibrated_clf, scaler
+
+
 if __name__ == "__main__":
     print("=== Meta-Aggregator Training (IEEE Fix #4 + Fix B: balanced retraining) ===\n")
 

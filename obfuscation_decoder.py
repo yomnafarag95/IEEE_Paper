@@ -316,7 +316,7 @@ def _decode_spaced_letters(text: str) -> Tuple[str, bool]:
         "I  g  n  o  r  e     a  l  l     p  r  i  o  r     i  n  s  t  r  u  c  t  i  o  n  s"
 
     Strategy:
-      1. Tokenise on whitespace (all spacing variants reduce to list of tokens).
+      1. Tokenize on whitespace (all spacing variants reduce to list of tokens).
       2. Find runs of >= 4 consecutive single-letter tokens.
       3. For each run, greedily segment the letters into known English words.
       4. Only trigger if at least one known word is found in the segmented run.
@@ -405,7 +405,7 @@ def _decode_rot13(text: str) -> Tuple[str, bool]:
 
     # --- Per-segment check: find tokens that look like ROT13 ciphertext ---
     # Heuristic: a token is candidate ROT13 if it's >=4 chars, all-alpha, and
-    # its ROT13 decoding is a recognised word.
+    # its ROT13 decoding is a recognized word.
     tokens = text.split()
     decoded_tokens = []
     any_rot13 = False
@@ -487,7 +487,16 @@ class ObfuscationDecoder:
     Returns a DecodedResult with the most suspicious (most decoded) variant.
     """
 
+    def __init__(self, enabled: bool = True):
+        self.enabled = enabled
+
     def decode(self, text: str) -> DecodedResult:
+        import os
+        decoder_enabled = self.enabled and (os.environ.get('RAGSHIELD_DECODER_ENABLED', '1') == '1')
+        if not decoder_enabled:
+            return DecodedResult(
+                raw=text, decoded=text, method="none", confidence=0.0
+            )
         if not text or not text.strip():
             return DecodedResult(
                 raw=text, decoded=text, method="none", confidence=0.0

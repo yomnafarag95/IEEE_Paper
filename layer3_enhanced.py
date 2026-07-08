@@ -20,6 +20,7 @@ import re
 import json
 import logging
 import pickle
+import time
 from pathlib import Path
 from typing import Optional
 
@@ -398,26 +399,121 @@ class ConsistencyClassifier:
 # BehavioralMonitor — main interface
 # ─────────────────────────────────────────────────────────────────────────────
 
+# ─────────────────────────────────────────────────────────────────────────────
+# Option-D meta-model wrapper
+# ─────────────────────────────────────────────────────────────────────────────
+
+class L3MetaModel:
+    """
+    Tiny logistic-regression meta-model trained on the independent dev set.
+    Governs only exfiltration / document-injection / leakage decisions.
+    Schema and canary checks remain separate hard veto paths.
+    """
+
+    def __init__(self, model_path: str):
+        with open(model_path, "rb") as f:
+            payload = pickle.load(f)
+        self.pipeline       = payload["pipeline"]
+        self.feature_indices = payload["feature_indices"]
+        self.feature_names  = payload["feature_names"]
+        self.threshold      = payload["threshold"]
+        self.anchor_embs    = payload["anchor_embs"]   # numpy (n_anchors, 384)
+        self.all_anchors    = payload["all_anchors"]
+        logger.info(
+            "[L3-meta] Loaded meta-model: features=%s threshold=%.3f",
+            self.feature_names, self.threshold,
+        )
+
+    def _regex_hits(self, query: str, document: str, response: str,
+                    schema_val: "SchemaValidator",
+                    boundary: "BoundaryTracker") -> float:
+        import re as _re
+        count = 0
+        doc_lower = document.lower()
+        full_text = f"{query} {document} {response}"
+        for pattern_str, _ in schema_val.DOC_INJECTION_PATTERNS:
+            if _re.search(pattern_str, doc_lower):
+                count += 1
+        for pat, _ in boundary.EXFIL_PATTERNS:
+            if pat.search(full_text):
+                count += 1
+        return float(count)
+
+    def _deberta_prob(self, response: str, l2_clf) -> float:
+        try:
+            return l2_clf._deberta_prob(response)
+        except Exception:
+            return 0.0
+
+    def _minilm_sim(self, query: str, document: str, response: str,
+                    encoder) -> float:
+        texts = [query, document, response]
+        embs = encoder.encode(texts, convert_to_numpy=True, show_progress_bar=False)
+        import numpy as _np
+        embs = embs / (_np.linalg.norm(embs, axis=1, keepdims=True) + 1e-9)
+        sims = embs @ self.anchor_embs.T
+        return float(sims.max())
+
+    def predict(self, query: str, document: str, response: str,
+                schema_val: "SchemaValidator",
+                boundary: "BoundaryTracker",
+                l2_clf=None,
+                encoder=None) -> dict:
+        """
+        Returns dict with 'blocked' (bool) and 'score' (float) and 'features' (list).
+        If l2_clf or encoder is None the corresponding feature defaults to 0.
+        """
+        all_feats = [
+            self._regex_hits(query, document, response, schema_val, boundary),
+            self._deberta_prob(response, l2_clf) if l2_clf is not None else 0.0,
+            self._minilm_sim(query, document, response, encoder) if encoder is not None else 0.0,
+        ]
+        X = np.array([[all_feats[i] for i in self.feature_indices]])
+        score = float(self.pipeline.predict_proba(X)[0, 1])
+        blocked = score >= self.threshold
+        return {
+            "score":    round(score, 4),
+            "blocked":  blocked,
+            "features": {name: round(all_feats[i], 4)
+                         for name, i in zip(self.feature_names, self.feature_indices)},
+        }
+
+
 class BehavioralMonitor:
     """
-    Combines all three Layer 3 sub-components.
+    Combines all three Layer 3 sub-components plus the Option-D meta-model.
+
+    Blocking logic (OR-ed hard veto paths):
+      1. Schema violations   — Pydantic schema checks  (UNCHANGED)
+      2. Boundary violations — sensitive-data patterns (UNCHANGED)
+      3. Canary exposure     — detected upstream via run_pipeline (UNCHANGED)
+      4. Consistency score   — cross-encoder relevance (UNCHANGED)
+      5. Meta-model          — exfil/injection logistic regression (NEW)
 
     check() returns:
         schema_valid        : bool
         schema_issues       : list[str]
         boundary_violations : list[dict]
         consistency_score   : float (0-1, higher = more suspicious)
-        blocked             : bool
+        meta_blocked        : bool   (meta-model decision only)
+        meta_score          : float
+        blocked             : bool   (OR of all veto paths)
         ev                  : list[tuple]
     """
 
     def __init__(self,
                  schema_validator: SchemaValidator,
                  boundary_tracker: BoundaryTracker,
-                 consistency_clf:  ConsistencyClassifier):
+                 consistency_clf:  ConsistencyClassifier,
+                 meta_model:       Optional["L3MetaModel"] = None,
+                 l2_clf=None,
+                 encoder=None):
         self.schema      = schema_validator
         self.boundary    = boundary_tracker
         self.consistency = consistency_clf
+        self.meta_model  = meta_model
+        self.l2_clf      = l2_clf
+        self.encoder     = encoder
 
     def check(self,
               query:         str,
@@ -473,11 +569,32 @@ class BehavioralMonitor:
 
         cs_score = round(cs_score, 4)
 
-        # ── Blocking decision ──────────────────────────────────────────────────
+        # ── Component D: Meta-model (exfil / injection / leakage only) ──────────
+        # Schema and canary are handled as SEPARATE veto paths (untouched).
+        meta_blocked = False
+        meta_score   = 0.0
+        meta_features: dict = {}
+        if self.meta_model is not None:
+            try:
+                meta_result  = self.meta_model.predict(
+                    query, full_doc, raw_response or "",
+                    self.schema, self.boundary,
+                    self.l2_clf, self.encoder,
+                )
+                meta_blocked  = meta_result["blocked"]
+                meta_score    = meta_result["score"]
+                meta_features = meta_result["features"]
+            except Exception as exc:
+                logger.warning("[L3] Meta-model prediction failed: %s", exc)
+
+        # ── Blocking decision — OR of all veto paths ───────────────────────────
+        # Schema violations and canary token exposure are untouched hard veto paths.
+        # The meta-model adds a new soft veto for exfil/injection/leakage.
         blocked = (
-            not schema_result["valid"]
-            or boundary_result["blocked"]
-            or cs_score > L3_CONSISTENCY_THRESHOLD
+            not schema_result["valid"]          # veto 1: schema
+            or boundary_result["blocked"]        # veto 2: sensitive-data boundary
+            or cs_score > L3_CONSISTENCY_THRESHOLD  # veto 3: consistency cross-encoder
+            or meta_blocked                      # veto 4: Option-D meta-model
         )
 
         schema_str = (
@@ -489,26 +606,35 @@ class BehavioralMonitor:
         confidence = round(min(abs(cs_score - L3_CONSISTENCY_THRESHOLD) * 2, 1.0), 4)
 
         logger.info(
-            "[L3] cs_score=%.4f upstream_risk=%.4f blocked=%s schema_valid=%s violations=%d",
-            cs_score, upstream_risk, blocked,
+            "[L3] cs_score=%.4f meta_score=%.4f meta_blocked=%s blocked=%s schema_valid=%s violations=%d",
+            cs_score, meta_score, meta_blocked, blocked,
             schema_result["valid"], len(boundary_result["violations"]),
         )
+
+        ev = [
+            ("Schema validation",   schema_str),
+            ("Boundary violations", str(boundary_result["count"])),
+            ("Consistency risk",    f"{cs_score:.4f}"),
+            ("Upstream risk",       f"{upstream_risk:.4f}"),
+            ("Confidence",          f"{confidence:.4f}"),
+            ("Base model",          "ms-marco-MiniLM-L-12 (enhanced)"),
+        ]
+        if self.meta_model is not None:
+            ev.append(("Meta-model score",  f"{meta_score:.4f}"))
+            ev.append(("Meta-model blocked", str(meta_blocked)))
+            for fname, fval in meta_features.items():
+                ev.append((f"  meta.{fname}", f"{fval:.4f}"))
 
         return {
             "schema_valid":        schema_result["valid"],
             "schema_issues":       schema_result["issues"],
             "boundary_violations": boundary_result["violations"],
             "consistency_score":   cs_score,
+            "meta_score":          meta_score,
+            "meta_blocked":        meta_blocked,
             "blocked":             blocked,
             "confidence":          confidence,
-            "ev": [
-                ("Schema validation",   schema_str),
-                ("Boundary violations", str(boundary_result["count"])),
-                ("Consistency risk",    f"{cs_score:.4f}"),
-                ("Upstream risk",       f"{upstream_risk:.4f}"),
-                ("Confidence",          f"{confidence:.4f}"),
-                ("Base model",          "ms-marco-MiniLM-L-12 (enhanced)"),
-            ],
+            "ev":                  ev,
         }
 
 
@@ -542,10 +668,52 @@ def load_monitor(finetuned_path: str = L3_FINETUNED_PATH) -> BehavioralMonitor:
             f"[L3] Failed to load consistency model '{load_path}': {exc}"
         ) from exc
 
+    # ── Option-D meta-model (optional) ────────────────────────────────────────
+    meta_model: Optional[L3MetaModel] = None
+    l2_clf     = None
+    encoder    = None
+    meta_model_path = Path("models") / "layer3_metamodel.pkl"
+    if meta_model_path.exists():
+        try:
+            print(f"[L3] Loading Option-D meta-model from '{meta_model_path}'")
+            meta_model = L3MetaModel(str(meta_model_path))
+
+            # Reuse the already-loaded Layer-2 DeBERTa classifier
+            try:
+                from layer2_classifier import load_classifier as _load_l2
+                l2_clf = _load_l2()
+                print("[L3] Meta-model: Layer 2 DeBERTa loaded for response scoring.")
+            except Exception as exc:
+                logger.warning("[L3] Could not load L2 classifier for meta-model: %s", exc)
+
+            # Reuse the all-MiniLM-L6-v2 encoder for anchor similarity
+            try:
+                from sentence_transformers import SentenceTransformer
+                encoder = SentenceTransformer("all-MiniLM-L6-v2")
+                print("[L3] Meta-model: all-MiniLM-L6-v2 encoder loaded.")
+            except Exception as exc:
+                logger.warning("[L3] Could not load MiniLM encoder for meta-model: %s", exc)
+
+            print("[L3] Option-D meta-model ready.")
+        except Exception as exc:
+            logger.warning(
+                "[L3] Failed to load meta-model from '%s': %s — running without it.",
+                meta_model_path, exc,
+            )
+            meta_model = None
+    else:
+        print(
+            f"[L3] No meta-model found at '{meta_model_path}'. "
+            "Run scratch/calibrate_l3_metamodel.py to generate it."
+        )
+
     return BehavioralMonitor(
         schema_validator = SchemaValidator(),
         boundary_tracker = BoundaryTracker(),
         consistency_clf  = ConsistencyClassifier(model, tok),
+        meta_model       = meta_model,
+        l2_clf           = l2_clf,
+        encoder          = encoder,
     )
 
 

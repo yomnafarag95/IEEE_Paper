@@ -40,6 +40,7 @@ BENIGN_FILE   = os.path.join(HOLDOUT_DIR, "benign.jsonl")
 EVASION_FILE  = os.path.join(HOLDOUT_DIR, "evasions.jsonl")
 SYS_PROMPT    = "Answer using only the provided knowledge base."
 REPORT_PATH   = "logs/eval_report_final_holdout_2026-06-16.json"
+SAMPLES_PATH  = "logs/final_holdout_samples.jsonl"
 
 def load_jsonl(path):
     rows = []
@@ -102,25 +103,38 @@ def main():
 
     runner = BenchmarkRunner(pipeline_fn, plots_dir="logs/curves")
     
-    # We will log everything in runner.results_log using _run_one
+    def run_and_tag(row, label, source, source_index, source_file):
+        doc, query, atype = process_sample(row, label)
+        entry = runner._run_one(
+            doc=doc,
+            query=query,
+            label=label,
+            attack_type=atype,
+            source=source,
+        )
+        entry.update({
+            "sample_id": f"{source}:{source_index}",
+            "source_index": source_index,
+            "source_file": source_file,
+        })
+        return entry
+
+    # We will log everything in runner.results_log using _run_one.
     print("\n[holdout] Running attacks...")
     for idx, row in enumerate(attacks):
-        doc, query, atype = process_sample(row, 1)
-        runner._run_one(doc=doc, query=query, label=1, attack_type=atype, source="attacks")
+        run_and_tag(row, 1, "attacks", idx, ATTACKS_FILE)
         if (idx + 1) % 50 == 0:
             print(f"  [progress] {idx+1}/{len(attacks)}")
 
     print("\n[holdout] Running benign...")
     for idx, row in enumerate(benign):
-        doc, query, atype = process_sample(row, 0)
-        runner._run_one(doc=doc, query=query, label=0, attack_type=atype, source="benign")
+        run_and_tag(row, 0, "benign", idx, BENIGN_FILE)
         if (idx + 1) % 50 == 0:
             print(f"  [progress] {idx+1}/{len(benign)}")
 
     print("\n[holdout] Running evasions...")
     for idx, row in enumerate(evasions):
-        doc, query, atype = process_sample(row, 1)
-        runner._run_one(doc=doc, query=query, label=1, attack_type=atype, source="evasions")
+        run_and_tag(row, 1, "evasions", idx, EVASION_FILE)
         if (idx + 1) % 50 == 0:
             print(f"  [progress] {idx+1}/{len(evasions)}")
 
@@ -157,12 +171,16 @@ def main():
             "error": str(exc),
         }
 
-    # Save to the specific REPORT_PATH
+    # Save aggregate metrics and the exact per-sample records behind them.
     Path(REPORT_PATH).parent.mkdir(parents=True, exist_ok=True)
     with open(REPORT_PATH, "w", encoding="utf-8") as f:
         json.dump(metrics, f, indent=2, default=str)
+    with open(SAMPLES_PATH, "w", encoding="utf-8") as f:
+        for entry in runner.results_log:
+            f.write(json.dumps(entry, ensure_ascii=False, default=str) + "\n")
 
     print(f"\n[holdout] Completed! Saved report to {REPORT_PATH}")
+    print(f"[holdout] Per-sample records saved to {SAMPLES_PATH}")
     print(f"[holdout] Curves generated at logs/curves/roc_final_holdout.png and pr_final_holdout.png")
 
 if __name__ == "__main__":

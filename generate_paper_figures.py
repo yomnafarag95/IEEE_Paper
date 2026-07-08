@@ -2,8 +2,9 @@
 Generate paper figures from the final-holdout artifacts.
 
 Inputs:
-  logs/eval_report_final_holdout_2026-06-16.json
   logs/ablation_results_final_holdout.json
+  logs/ablation_results_final_holdout_samples.jsonl
+  logs/eval_report_final_holdout_2026-06-16.json  (ROC/PR curves companion)
   logs/baseline_comparison.json
   logs/commercial_comparison.json
   logs/curves/roc_final_holdout.png
@@ -13,7 +14,7 @@ Outputs:
   figures/fig2_roc_pr.{png,pdf}
   figures/fig3_confusion_attribution.{png,pdf}
   figures/fig4_latency.{png,pdf}
-  figures/fig5_method_comparison.{png,pdf}
+  figures/fig3_method_comparison.{png,pdf}
 """
 
 from __future__ import annotations
@@ -32,6 +33,7 @@ import numpy as np
 OUT_DIR = Path("figures")
 REPORT_PATH = Path("logs/eval_report_final_holdout_2026-06-16.json")
 ABLATION_PATH = Path("logs/ablation_results_final_holdout.json")
+ABLATION_SAMPLES_PATH = Path("logs/ablation_results_final_holdout_samples.jsonl")
 BASELINE_PATH = Path("logs/baseline_comparison.json")
 COMMERCIAL_PATH = Path("logs/commercial_comparison.json")
 ROC_PATH = Path("logs/curves/roc_final_holdout.png")
@@ -61,6 +63,47 @@ def _load_json(path: Path) -> dict:
         raise FileNotFoundError(f"Missing required artifact: {path}")
     with path.open(encoding="utf-8") as f:
         return json.load(f)
+
+
+def _current_holdout_report(ablation: dict) -> dict:
+    """Build the headline report from the current source-of-truth artifacts."""
+    full = ablation["Full (Pipeline)"]["metrics"]
+    return {
+        "ADR_prevention": full["ADR"],
+        "ADR_detection": full["ADR"],
+        "FPR_prevention": full["FPR"],
+        "FPR_detection": full["FPR"],
+        "precision_prevention": full["Prec"],
+        "precision_detection": full["Prec"],
+        "F1_prevention": full["F1"],
+        "F1_detection": full["F1"],
+        "TP_prevention": full["TP"],
+        "FP_prevention": full["FP"],
+        "TN_prevention": full["TN"],
+        "FN_prevention": full["FN"],
+        "TP_detection": full["TP"],
+        "FP_detection": full["FP"],
+        "TN_detection": full["TN"],
+        "FN_detection": full["FN"],
+        "layer_attribution": _current_layer_attribution(),
+    }
+
+
+def _current_layer_attribution() -> dict:
+    if not ABLATION_SAMPLES_PATH.exists():
+        raise FileNotFoundError(f"Missing required artifact: {ABLATION_SAMPLES_PATH}")
+
+    counts: dict[str, int] = {}
+    with ABLATION_SAMPLES_PATH.open(encoding="utf-8") as f:
+        for line in f:
+            row = json.loads(line)
+            if row.get("config") != "Full (Pipeline)":
+                continue
+            if int(row.get("true_label", 0)) != 1 or int(row.get("pred_detected", 0)) != 1:
+                continue
+            layer = row.get("blocking_layer") or "Meta Aggregator - Combined Risk"
+            counts[layer] = counts.get(layer, 0) + 1
+    return counts
 
 
 def _save(fig: plt.Figure, stem: str) -> None:
@@ -96,7 +139,7 @@ def make_fig2_roc_pr(report: dict) -> None:
         ax.axis("off")
 
     fig.suptitle(
-        "Final Holdout Discrimination Curves (n = 867)",
+        "Final Holdout Discrimination Curves (n = 868)",
         y=1.02,
         fontsize=10,
         fontweight="bold",
@@ -166,12 +209,13 @@ def make_fig3_confusion_attribution(report: dict) -> None:
 
     ax_attr = fig.add_subplot(gs[1, 0])
     attribution = report["layer_attribution"]
-    names = ["Layer 2\nIntent", "Layer 1\nAnomaly"]
+    names = ["Layer 2\nIntent", "Layer 1\nAnomaly", "Meta\nAggregator"]
     values = [
         attribution.get("Layer 2 - Intent Classifier", 0),
         attribution.get("Layer 1 - Anomaly Detection", 0),
+        attribution.get("Meta Aggregator - Combined Risk", 0),
     ]
-    colors = ["#d97706", "#2563eb"]
+    colors = ["#d97706", "#2563eb", "#059669"]
     bars = ax_attr.bar(names, values, color=colors, width=0.55)
     ax_attr.set_title("True-Positive Blocking Attribution", fontweight="bold")
     ax_attr.set_ylabel("Count")
@@ -222,35 +266,10 @@ def make_fig3_confusion_attribution(report: dict) -> None:
     _save(fig, "fig3_confusion_attribution")
 
 
-def make_fig4_latency(report: dict) -> None:
-    latency = report["latency_breakdown"]
-    labels = [
-        "Chunking",
-        "L1 anomaly",
-        "L2 intent",
-        "L1+L2 wall",
-        "L3 monitor",
-        "Meta",
-        "Total",
-    ]
-    means = [
-        latency["chunking_ms"]["mean_ms"],
-        latency["l1_ms"]["mean_ms"],
-        latency["l2_ms"]["mean_ms"],
-        latency["l1_l2_wall_ms"]["mean_ms"],
-        latency["l3_ms"]["mean_ms"],
-        latency["meta_ms"]["mean_ms"],
-        latency["total_ms"]["mean_ms"],
-    ]
-    p95s = [
-        latency["chunking_ms"]["p95_ms"],
-        latency["l1_ms"]["p95_ms"],
-        latency["l2_ms"]["p95_ms"],
-        latency["l1_l2_wall_ms"]["p95_ms"],
-        latency["l3_ms"]["p95_ms"],
-        latency["meta_ms"]["p95_ms"],
-        latency["total_ms"]["p95_ms"],
-    ]
+def make_fig4_latency(ablation: dict) -> None:
+    labels = list(ablation.keys())
+    means = [ablation[name]["metrics"]["mean_latency_ms"] for name in labels]
+    p95s = [ablation[name]["metrics"]["p95_latency_ms"] for name in labels]
 
     y = np.arange(len(labels))
     fig, ax = plt.subplots(figsize=(7.1, 3.25))
@@ -260,7 +279,7 @@ def make_fig4_latency(report: dict) -> None:
     ax.set_yticklabels(labels)
     ax.invert_yaxis()
     ax.set_xlabel("Latency (ms)")
-    ax.set_title("Per-Component Latency on Final Holdout", fontweight="bold")
+    ax.set_title("Final Holdout Latency by Configuration", fontweight="bold")
     ax.set_xscale("log")
     ax.set_xlim(0.008, 8000)
     ax.grid(axis="x", which="both", alpha=0.18)
@@ -279,7 +298,7 @@ def make_fig4_latency(report: dict) -> None:
     _save(fig, "fig4_latency")
 
 
-def make_fig5_method_comparison() -> None:
+def make_fig3_method_comparison() -> None:
     baseline = _load_json(BASELINE_PATH)
     commercial = _load_json(COMMERCIAL_PATH)
 
@@ -333,20 +352,23 @@ def make_fig5_method_comparison() -> None:
         fontsize=7,
         color="#4b5563",
     )
-    _save(fig, "fig5_method_comparison")
+    _save(fig, "fig3_method_comparison")
 
 
 def main() -> None:
-    report = _load_json(REPORT_PATH)
-    _load_json(ABLATION_PATH)
+    # REPORT_PATH is still loaded to fail early if the ROC/PR companion artifact
+    # is missing, but headline metrics now come from the current ablation run.
+    _load_json(REPORT_PATH)
+    ablation = _load_json(ABLATION_PATH)
     _load_json(BASELINE_PATH)
     _load_json(COMMERCIAL_PATH)
+    report = _current_holdout_report(ablation)
 
     print("Generating updated paper figures from final artifacts")
     make_fig2_roc_pr(report)
     make_fig3_confusion_attribution(report)
-    make_fig4_latency(report)
-    make_fig5_method_comparison()
+    make_fig4_latency(ablation)
+    make_fig3_method_comparison()
 
 
 if __name__ == "__main__":

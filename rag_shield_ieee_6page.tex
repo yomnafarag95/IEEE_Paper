@@ -1,66 +1,33 @@
-\documentclass[conference]{IEEEtran}
-\IEEEoverridecommandlockouts
-
-% Space saving tweaks for IEEEtran layout
-\setlength{\textfloatsep}{5pt plus 2pt minus 2pt}
-\setlength{\dbltextfloatsep}{5pt plus 2pt minus 2pt}
-\setlength{\abovecaptionskip}{3pt plus 1pt minus 1pt}
-\setlength{\belowcaptionskip}{3pt plus 1pt minus 1pt}
-\renewcommand\baselinestretch{0.98}
-
+﻿\documentclass[conference]{IEEEtran}
 
 \usepackage{cite}
 \usepackage{amsmath,amssymb,amsfonts}
 \usepackage{algorithmic}
+\usepackage{algorithm}
 \usepackage{graphicx}
 \usepackage{textcomp}
-\usepackage{xcolor}
 \usepackage{booktabs}
-\usepackage{array}
-\usepackage{multirow}
+\usepackage{enumitem}
 \usepackage{url}
-\usepackage{needspace}
-% Use \mathbf{1} for indicator function
 \usepackage{tikz}
+\usepackage{placeins}
 \usetikzlibrary{shapes.geometric, arrows.meta, positioning}
 
-% TikZ styles for the pipeline figure
+\setlength{\textfloatsep}{5pt plus 2pt minus 2pt}
+\setlength{\dbltextfloatsep}{5pt plus 2pt minus 2pt}
+\setlength{\abovecaptionskip}{3pt plus 1pt minus 1pt}
+\setlength{\belowcaptionskip}{3pt plus 1pt minus 1pt}
+\linespread{0.98}
+
 \tikzset{
-  pipeblock/.style={
-    rectangle,
-    draw=black,
-    thick,
-    text centered,
-    minimum width=4.4cm,
-    minimum height=0.75cm,
-    font=\small,
-    text width=4.2cm,
-  },
-  parblock/.style={
-    rectangle,
-    draw=black,
-    thick,
-    text centered,
-    minimum width=2.0cm,
-    minimum height=0.80cm,
-    font=\small,
-    text width=1.85cm,
-  },
-  decision/.style={
-    rectangle,
-    draw=black,
-    thick,
-    text centered,
-    minimum width=4.8cm,
-    minimum height=0.75cm,
-    font=\small\bfseries,
-    text width=4.6cm,
-  },
-  arrow/.style={
-    ->,
-    >=Stealth,
-    thick
-  }
+  pipeblock/.style={rectangle,draw=black,thick,text centered,
+    minimum width=4.4cm,minimum height=0.75cm,font=\small,text width=4.2cm},
+  parblock/.style={rectangle,draw=black,thick,text centered,
+    minimum width=2.0cm,minimum height=0.80cm,font=\small,text width=1.85cm},
+  decision/.style={rectangle,draw=black,thick,text centered,
+    minimum width=4.8cm,minimum height=0.75cm,font=\small\bfseries,
+    text width=4.6cm},
+  arrow/.style={->,>=Stealth,thick}
 }
 
 \def\BibTeX{{\rm B\kern-.05em{\sc i\kern-.025em b}\kern-.08em
@@ -68,10 +35,13 @@
 
 \begin{document}
 
-\title{RAG-Shield: A Three-Layer Ensemble Defense Against Prompt Injection in RAG Pipelines}
+\title{RAG-Shield: A Three-Layer Ensemble Defense Against Prompt Injection
+in RAG Pipelines}
 
 \author{
-  \IEEEauthorblockN{Yasmeen Algendy\thanks{Code, datasets, and pre-trained weights are available at \url{https://github.com/yomnafarag95/IEEE_Paper}.}}
+  \IEEEauthorblockN{Yasmeen Algendy\thanks{Code, evaluation scripts, and
+    dataset manifests are available at
+    \url{https://github.com/yomnafarag95/IEEE_Paper}.}}
   \IEEEauthorblockA{\textit{School of Computing}\\
   \textit{Queen's University}\\
   Kingston, ON, Canada\\
@@ -87,239 +57,536 @@
 \maketitle
 
 \begin{abstract}
-Retrieval-Augmented Generation (RAG) pipelines ground Large Language Models (LLMs) on private knowledge bases, but introduce a critical attack surface: adversaries can embed malicious instructions in queries (direct injection) or retrieved documents (indirect injection) to override system prompts, exfiltrate credentials, or execute unauthorized actions. Existing defenses---keyword blocklists, single-model classifiers, or LLM-based guardrails---suffer from low detection on obfuscated evasions, high false positives, or high latency.
+Retrieval-Augmented Generation (RAG) pipelines ground Large Language Models
+on private knowledge bases but expose a critical attack surface: adversaries
+can embed malicious instructions in user queries or retrieved documents to
+override system prompts, exfiltrate secrets, or trigger unauthorized actions.
+We present RAG-Shield, a middleware defense integrating:
+(1)~an optional embedding-based anomaly detector combining Isolation Forest,
+One-Class SVM, and ECOD on all-MiniLM-L6-v2 embeddings;
+(2)~a dual-stage intent classifier on
+protectai/deberta-v3-base-prompt-injection-v2 with document-level chunk
+scanning; and
+(3)~a behavioral monitor for query/document pattern checks, sensitive-data
+boundary violations, optional response validation, and canary-token exposure.
+A calibrated Logistic Regression meta-aggregator combines input-stage
+evidence into a unified risk score with deterministic keyword-risk adjustment.
 
-We present RAG-Shield, a three-layer ensemble defense integrating: (1) an embedding-based Out-of-Distribution (OOD) anomaly detector combining Isolation Forest, One-Class SVM, and ECOD on all-MiniLM-L6-v2 embeddings; (2) a dual-stage intent classifier built on protectai/deberta-v3-base-prompt-injection-v2 with document-level chunk scanning; and (3) a behavioral monitor using a pre-trained ms-marco-MiniLM-L-12-v2 cross-encoder for response consistency, regex-based exfiltration detection, and cryptographic canary tokens. A calibrated Logistic Regression model aggregates layer evidence over a 7-dimensional vector into a unified risk score.
-
-On a sealed, hash-verified holdout benchmark ($n = 868$: 325 attack samples [250 direct/indirect injections + 75 obfuscated evasions], 543 benign), RAG-Shield achieves an Attack Detection Rate (ADR) of \textbf{91.38\%} at a False Positive Rate of 0.55\% (3/543 benign queries), with F1 = \textbf{95.04\%}, ROC-AUC = 0.9576, and AUC-PR = 0.9723. In head-to-head comparisons on a shared subset, RAG-Shield (ADR = 93.54\%, F1 = 0.945) outperforms Llama Prompt Guard~2 (ADR = 79.49\%, F1 = 0.883, $p < 10^{-4}$), Llama-3.1-8B Guardrails (ADR = 29.78\%), and NVIDIA NeMo Injection Rails (ADR = 7.58\%).
+On a sealed, hash-verified holdout ($n = 868$: 325 attack/evasion,
+543 benign), RAG-Shield achieves ADR~=~91.38\%, FPR~=~0.55\%,
+F1~=~95.04\%, and mean latency~=~562.95\,ms.
+In a point-in-time live-API configuration comparison ($n = 856$), where
+RAG-Shield receives retrieved chunks and baselines are evaluated query-only,
+RAG-Shield achieves ADR~=~93.54\% and FPR~=~3.20\%---exceeding the 1\%
+enterprise target and requiring recalibration before deployment.
+At realistic 1\% enterprise attack prevalence, precision degrades to 62.6\%;
+the configuration gap prevents comparison results from serving as evidence
+of model-quality superiority.
 \end{abstract}
 
 \begin{IEEEkeywords}
-Prompt Injection, Retrieval-Augmented Generation, LLM Security, Anomaly Detection, Ensemble Defense, Canary Tokens, Indirect Injection.
+Prompt Injection, Retrieval-Augmented Generation, LLM Security,
+Anomaly Detection, Ensemble Defense.
 \end{IEEEkeywords}
 
-%-----------------------------------------------------------------------
+%% ----------------------------------------------------------------
 \section{Introduction}
+%% ----------------------------------------------------------------
 
 \subsection{The RAG Trust Boundary Problem}
 
-RAG has become the dominant paradigm for deploying LLMs on proprietary, time-sensitive enterprise data. A canonical RAG pipeline intercepts a user query $q$, retrieves the top-$k$ semantically similar document chunks $D = \{d_1,\ldots,d_k\}$ from a vector store, constructs a composite prompt $p = \psi(q, D, \Phi)$, and passes $p$ to generative model $M_G$.
-
-This design introduces a fundamental trust boundary collapse: the LLM consumes external text---potentially from untrusted emails, web scrapes, or user-uploaded files---as contextual authority. When retrieved documents contain adversarially crafted instructions, those instructions are transparently injected into the model's context alongside the legitimate system prompt, which the model cannot structurally distinguish.
+Retrieval-augmented generation (RAG)~\cite{lewis2020rag} is a widely used
+paradigm for deploying LLMs on proprietary, time-sensitive enterprise data.
+A canonical RAG pipeline intercepts a user query $q$, retrieves the top-$k$
+semantically similar document chunks $D = \{d_1,\ldots,d_k\}$ from a vector
+store, constructs a composite prompt $p = \psi(q, D, \Phi)$, and passes $p$
+to generative model $M_G$:
+\begin{align}
+D &= R(q,K) = \{d_1,\ldots,d_k\} \subset K, \notag\\
+p &= \psi(q,D,\Phi), \quad r = M_G(p) \label{eq:rag}
+\end{align}
+This design introduces a fundamental trust boundary collapse: the LLM
+consumes external text---potentially from untrusted emails, web scrapes, or
+user-uploaded files---as contextual authority, and cannot structurally
+distinguish legitimate system instructions from adversarially crafted ones
+embedded in retrieved context.
 
 \subsection{Attack Vectors and Evasion Techniques}
 
-Prompt injection against RAG systems manifests in two structurally distinct forms. \textbf{Direct Injection}: the user query $q$ itself contains the adversarial payload (instruction overrides, role-manipulation, context exhaustion). \textbf{Indirect Injection}: a benign user triggers retrieval of a poisoned document $d_i \in D$ containing embedded payloads, transparent to the user.
-
-These attack families are further obfuscated through encoding evasions---payload splitting, Base64/hex encoding, Unicode homoglyph substitution, ROT13, Leetspeak, and zero-width character injection---which bypass tokenizer vocabularies and static keyword filters while remaining semantically interpretable to the LLM.
+Prompt injection against RAG systems manifests in two forms.
+\textit{Direct Injection}: the user query $q$ itself contains the adversarial
+payload.
+\textit{Indirect Injection}: a benign user triggers retrieval of a poisoned
+document $d_i \in D$ containing embedded payloads, transparent to the user.
+Both families are further obfuscated through encoding evasions---payload
+splitting, Base64/hex encoding, Unicode homoglyph substitution, ROT13,
+Leetspeak, and zero-width character injection---which bypass tokenizer
+vocabularies and static keyword filters while remaining semantically
+interpretable to the LLM.
 
 \subsection{Limitations of Existing Defenses}
 
-Three deployed defense classes each fail in distinct ways. \textbf{Static Keyword Blocklists} are trivially bypassed by any encoding evasion (ADR = 4.02\% on our 848-sample baseline). \textbf{Single-Model Neural Classifiers} miss indirect injections by not scanning retrieved chunks. \textbf{LLM-Based Guardrails} (NeMo, Llama-3.1) introduce 3--6\,s of API latency and still achieve low recall on document-embedded payloads.
+Three deployed defense classes each fail in distinct ways.
+\textit{Static keyword blocklists} are trivially bypassed by any encoding
+evasion (ADR\,=\,4.02\% on our 848-sample classical comparison subset;
+see Table~\ref{tab:classical}).
+\textit{Query-only neural classifier deployments} miss indirect injections
+when they do not scan retrieved chunks.
+\textit{LLM-based guardrails} introduced 3--6\,s of API latency per query
+(mean 3,326--5,251\,ms in our June~2026 live-API measurement) and, in the
+evaluated query-only configuration, achieved low recall on document-embedded
+payloads.
 
 \subsection{Contributions}
 
 \begin{enumerate}
-  \item A three-layer ensemble pipeline scanning the RAG pipeline at retrieval input, generation context, and model output simultaneously.
-  \item Document-level indirect injection scanning in Layer~2, extending beyond query classification to per-chunk scanning of all retrieved documents.
-  \item Multi-signal meta-aggregation via calibrated Logistic Regression over a 7-dimensional evidence vector, enabling principled uncertainty handling.
-  \item Cryptographic canary tokens injected into the vector store as decoy documents; any appearance in model output constitutes an irrefutable data-leakage signal.
-  \item A reproducible sealed evaluation on a hash-verified holdout ($n = 868$) with frozen thresholds (Git \texttt{3ef152293d76b81c0a080a8d26d67e010297d7f7}) and Wilson/bootstrap confidence intervals.
+  \item A layered ensemble middleware evaluated for retrieval-input and
+    document-context checks, with behavioral schema/pattern, leakage,
+    exfiltration, and canary backstops.
+  \item \textbf{Open, auditable multi-layer detection with document-level
+    chunk scanning} (Layer~2, Stage~1b): unlike commercial black-box APIs
+    that provide chunk scanning as an opaque endpoint, RAG-Shield integrates
+    document-level scanning with optional OOD anomaly detection and calibrated risk
+    aggregation in a self-hosted pipeline with per-layer score
+    transparency---the primary source of ADR improvement over query-only
+    configurations (Table~\ref{tab:commercial}).
+  \item Multi-signal meta-aggregation via calibrated Logistic Regression over
+    a 7-dimensional evidence vector plus a deterministic keyword-risk
+    adjustment.
+  \item Implemented response-stage schema, canary, and consistency checks,
+    evaluated separately from the static sealed holdout where no generated
+    response is supplied.
+  \item A reproducible sealed evaluation on a hash-verified holdout
+    ($n = 868$) with frozen thresholds and Wilson/bootstrap confidence
+    intervals.
 \end{enumerate}
 
-%-----------------------------------------------------------------------
+%% ----------------------------------------------------------------
 \section{Related Work}
+%% ----------------------------------------------------------------
 
-\subsection{Prompt Injection: Taxonomy and Threat Evolution}
+Perez and Ribeiro~\cite{perez2022} first systematically described prompt
+injection; Greshake et al.~\cite{greshake2023} demonstrated indirect
+injection in real-world LLM agents; Liu et al.~\cite{liu2023} studied
+injection against LLM-integrated applications; the InjecAgent
+benchmark~\cite{zhan2024} and BIPIA~\cite{yi2023} formalized indirect
+injection in tool- and agent-based settings; Schulhoff et
+al.~\cite{schulhoff2023} cataloged 600,000+ attempts across 28 attack
+categories.
+Defense approaches include ProtectAI's
+deberta-v3-base-prompt-injection-v2~\cite{protectai2023} (Layer~2 backbone),
+LLM-Guard~\cite{llmguard2023} (post-generation scanning), Azure Prompt
+Shield~\cite{azurepromptshield2024} (native chunk scanning, assessed
+query-only here for configuration parity), Rebuff~\cite{rebuff2023}
+(embedding similarity against known patterns), and
+PromptBench~\cite{promptbench2023} (adversarial robustness benchmarking;
+excluded from Table~\ref{tab:commercial} as it has no \texttt{detect()}
+interface returning ADR/FPR/F1).
+Guardrail frameworks NeMo Guardrails~\cite{rebedea2023} and Llama
+Guard~\cite{inan2023} position a second LLM as safety referee, inheriting
+per-query LLM inference latency and lacking document-level chunk scanning in
+the evaluated configuration.
+RAG-Shield differs by providing open, auditable, multi-layer detection with
+per-layer score transparency and calibrated risk aggregation.
+Anomaly detection for adversarial inputs draws from feature
+squeezing~\cite{xu2018} and OOD detection~\cite{hendrycks2017};
+canary/honeytoken mechanisms~\cite{spitzner2003,bowen2009} are adapted here
+as decoy RAG records.
+Three gaps motivate RAG-Shield: (a)~limited simultaneous scanning of user
+queries and retrieved corpora; (b)~limited integration of OOD detection,
+neural classification, and behavioral monitoring in a calibrated risk model;
+and (c)~few head-to-head deployment evaluations of guardrails on identical
+injection corpora with stated configuration conditions.
 
-Perez and Ribeiro~\cite{perez2022} first systematically described prompt injection, drawing an analogy to SQL injection in structured query languages. Greshake et al.~\cite{greshake2023} subsequently demonstrated indirect prompt injection in real-world LLM agents, showing that adversarially annotated web pages could hijack autonomous LLM tools. Liu et al.~\cite{liu2023} studied prompt injection against real LLM-integrated applications. The InjecAgent benchmark~\cite{zhan2024} formalized indirect prompt injection in tool-integrated agents, contributing part of our evaluation corpus. Yi et al.~\cite{yi2023} introduced BIPIA, a benchmark and defense study for indirect injection. Schulhoff et al.~\cite{schulhoff2023} catalogued over 600,000 injection attempts across 28 attack categories in the HackAPrompt competition, providing our evasion holdout samples.
-
-\subsection{Defense Methodologies}
-
-Input filtering ranges from simple keyword blocklists to specialized neural classifiers. ProtectAI's deberta-v3-base-prompt-injection-v2~\cite{protectai2023}, fine-tuned on a curated injection corpus, forms the backbone of our Layer~2. LLM-Guard~\cite{iurman2023} applies post-generation regex and classifier-based scanning conceptually similar to our Layer~3, but without cross-encoder consistency scoring or canary detection. Guardrail frameworks such as NVIDIA NeMo Guardrails~\cite{rebedea2023} and Meta's Llama Guard~\cite{inan2023} position a second LLM as a safety referee: while flexible, they inherit additional LLM inference latency and do not perform document-level chunk scanning. Our empirical comparison confirms their low recall on indirect injection scenarios.
-
-\subsection{Anomaly Detection and Identified Gaps}
-
-Anomaly detection for adversarial inputs has been studied in feature squeezing~\cite{xu2018} and OOD detection~\cite{hendrycks2017}. Applying statistical OOD detectors (Isolation Forest, ECOD) to semantic embeddings as a RAG pre-filter is, to our knowledge, novel in the context of RAG security. Canary tokens~\cite{kreibich2003} are well-established in traditional network security; their application as decoy records injected into a vector store's embedding space to detect LLM-driven exfiltration is a contribution of this work. Three gaps motivate RAG-Shield: (a)~limited simultaneous scanning of user queries and retrieved document corpora; (b)~limited integration of OOD detection, neural classification, and behavioral monitoring within a calibrated risk model; and (c)~few head-to-head evaluations of commercial guardrails on identical injection corpora with statistical significance tests.
-
-%-----------------------------------------------------------------------
+%% ----------------------------------------------------------------
 \section{Problem Formulation}
+%% ----------------------------------------------------------------
 
-Let the RAG system be the tuple $(R, K, M_G, \Phi)$, where $R$ is the dense retriever, $K$ is the vector store, $M_G$ is the generative LLM, and $\Phi$ is the system instruction. For user query $q \in Q$:
-\begin{align}
-D &= R(q,K) = \{d_1,\ldots,d_k\} \subset K, \notag\\
-p &= \psi(q,D,\Phi), \quad r = M_G(p)
-\end{align}
+Let the RAG system be the tuple $(R, K, M_G, \Phi)$, where $R$ is the dense
+retriever, $K$ is the vector store, $M_G$ is the generative LLM, and $\Phi$
+is the system instruction.
+For user query $q \in Q$, the pipeline is defined by~(\ref{eq:rag}).
+Document chunks use a word-boundary sliding window with character budget
+$w = 200$ and overlap $\delta = 40$.
 
-Document chunks use a sliding-window tokenizer with chunk size $w = 200$ tokens and overlap $\delta = 40$ tokens.
+\textbf{Adversary Capabilities.}
+We model an attacker able to: (1)~submit arbitrary queries to the RAG API
+endpoint; (2)~inject payloads into one or more documents within $K$; and
+(3)~observe binary allow/block responses but not internal layer scores.
+The adversary does not know session canary values.
+\emph{RAG-Shield's empirical claims apply only to non-adaptive adversaries
+who do not exploit the publicly disclosed thresholds; robustness against
+adaptive white-box adversaries is a known limitation and future work.}
 
-\textbf{Adversary Capabilities.} We model an attacker able to: (1)~submit arbitrary queries to the RAG API endpoint; (2)~inject payloads into one or more documents within $K$ (via document upload or web scraping); and (3)~observe binary allow/block responses but not internal layer scores. The adversary does not know session canary values, but model identities and thresholds are considered discoverable in a published system.
-
-\textbf{Attack Scenarios.}
-\begin{itemize}
-  \item \textit{Direct Injection}: $q = a_{dir}$ --- adversary encodes full override payload in the query.
-  \item \textit{Indirect Injection}: $q \in Q_{benign}$, $\exists\, d_i \in D : d_i = t_i \| a_{ind}$ --- poisoned retrieved document.
-  \item \textit{Encoding Obfuscation}: $a_{obf} = T(a)$ where $T \in \{\text{Base64, Hex, ROT13, Leetspeak, Unicode}\}$ is an obfuscation transform applied to the payload.
-  \item \textit{Data Exfiltration}: injection instructs extraction of credentials, API keys, or PII from retrieved documents.
-\end{itemize}
-
-\textbf{Defense Objectives.} We define the decision function $\mathcal{D} : (Q \times K^k \times \mathcal{Y}) \to \{0,1\}$, where $K^k$ denotes $k$-chunk retrieval sets and $\mathcal{Y}$ the LLM response space. Let $\hat{Y} = \mathcal{D}(q, D, r) \in \{0,1\}$ denote the predicted label ($\hat{Y}=1$ = blocked/flagged). The defense objective is:
+\textbf{Defense Objectives.}
 \begin{align}
 \max_\theta\quad &P_\theta(\hat{Y}=1 \mid Y=1) \notag\\
-\text{subject to}\quad &P_\theta(\hat{Y}=1 \mid Y=0) \leq \epsilon_{\mathrm{FPR}} \leq 1.0\%
+\text{subject to}\quad
+  &P_\theta(\hat{Y}=1 \mid Y=0) \leq \epsilon_{\mathrm{FPR}},
+  \quad \epsilon_{\mathrm{FPR}} = 0.01 \label{eq:obj}
 \end{align}
+The 1.0\% FPR budget reflects enterprise deployment constraints. This
+objective defines the target operating point; the current prototype uses
+frozen manually selected thresholds rather than a formally optimized solution
+to~(\ref{eq:obj}).
 
-The 1.0\% FPR budget reflects enterprise deployment constraints: false positives cause alert fatigue and risk disabling guardrails entirely.
-
-%-----------------------------------------------------------------------
+%% ----------------------------------------------------------------
 \section{System Architecture}
+%% ----------------------------------------------------------------
 
 \subsection{Pipeline Overview}
 
-RAG-Shield operates as transparent middleware between the RAG orchestrator and the LLM endpoint (Fig.~\ref{fig:pipeline}). Three detection checkpoints produce scored evidence for the meta-aggregator. Layers~1 and~2 execute in parallel via a ThreadPoolExecutor. A semantic cache ($\tau_{cache} = 0.98$ cosine similarity) deduplicates repeated queries. A SHA-256-keyed LRU cache avoids redundant embedding and classification of repeated document corpora.
-
-\textbf{Text Normalization.} Before any model inference, an ObfuscationDecoder applies NFKC normalization and a regex-driven cascade reversing six encoding families (Base64, Hex, ROT13, Leetspeak, zero-width characters, Unicode confusables), rendering encoding-based evasion ineffective without model fine-tuning.
+RAG-Shield operates as transparent middleware between the RAG orchestrator
+and the LLM endpoint (Fig.~\ref{fig:pipeline},
+Algorithm~\ref{alg:detection}).
+Layers~1 and~2 execute in parallel via a ThreadPoolExecutor.
+A semantic document cache ($\tau_{cache} = 0.98$ cosine similarity)
+deduplicates near-duplicate retrieved corpora; a SHA-256-keyed LRU cache
+avoids redundant inference on exact-repeat document sets.
+Before any model inference, an ObfuscationDecoder applies NFKC normalization
+and a regex-driven cascade reversing six encoding families (Base64, Hex,
+ROT13, Leetspeak, zero-width characters, Unicode confusables).
 
 \begin{figure}[t]
 \centering
 \begin{tikzpicture}[node distance=0.42cm, auto]
-  % Input
   \node [pipeblock] (input) {Input: Query $q$, Documents $D$};
-
-  % Layer 1 and Layer 2 run in PARALLEL (ThreadPoolExecutor)
   \node [parblock] (l1) at ([xshift=-1.2cm, yshift=-1.05cm]input.south)
         {Layer~1:\\ Anomaly Det.};
   \node [parblock] (l2) at ([xshift= 1.2cm, yshift=-1.05cm]input.south)
         {Layer~2:\\ Intent Class.};
-
-  % Sequential stages after parallel group
-  \node [pipeblock] (l3)   at ([yshift=-2.40cm]input.south)
+  \node [pipeblock] (l3) at ([yshift=-2.40cm]input.south)
         {Layer~3: Behavioral Monitor};
-  \node [pipeblock, below=of l3]   (meta) {Meta-Aggregator (Logistic Regression)};
-  \node [decision,  below=of meta] (out)  {ALLOW / MONITOR / BLOCK};
-
-  % Fork and merge coordinates
+  \node [pipeblock, below=of l3] (meta)
+        {Meta-Aggregator (Logistic Regression)};
+  \node [decision,  below=of meta] (out) {ALLOW / MONITOR / BLOCK};
   \coordinate (forkC)  at ([yshift=-0.35cm]input.south);
   \coordinate (mergeC) at ([yshift= 0.35cm]l3.north);
-
-  % Fork: input -> L1 and L2 in parallel
   \draw [-] (input.south) -- (forkC);
   \draw [arrow] (forkC) -| (l1.north);
   \draw [arrow] (forkC) -| (l2.north);
-
-  % Merge: L1 and L2 -> L3
   \draw [-] (l1.south) |- (mergeC);
   \draw [-] (l2.south) |- (mergeC);
   \draw [arrow] (mergeC) -- (l3.north);
-
-  % Sequential flow
   \draw [arrow] (l3)   -- (meta);
   \draw [arrow] (meta) -- (out);
 \end{tikzpicture}
-\caption{RAG-Shield architecture. Layers~1 and~2 execute \emph{in parallel} via a thread pool; if either score exceeds its threshold ($\tau_{L1}=0.85$ or $\tau_{early}=0.60$), the orchestrator issues an early-exit hard block, bypassing Layer~3 and the meta-aggregator. Otherwise all signals merge into the meta-aggregator for the final three-tier decision.}
+\caption{RAG-Shield architecture. Layers~1 and~2 execute \emph{in parallel};
+if either score is above its threshold ($\tau_{L1}=0.85$ or
+$\tau_{early}=0.60$), an early-exit hard block is issued. Otherwise signals
+enter Layer~3 and the meta-aggregator. Response-specific Layer~3 signals are
+used only when a generated response is available.}
 \label{fig:pipeline}
 \end{figure}
 
+\begin{algorithm}[t]
+\caption{RAG-Shield Pipeline Detection Flow}
+\label{alg:detection}
+\scriptsize
+\begin{algorithmic}[1]
+\REQUIRE Query $q$, Retrieved chunks $D = \{d_1, \ldots, d_k\}$,
+         System prompt $\Phi$, optional response $r$
+\ENSURE Action $\in \{\text{Block}, \text{Monitor}, \text{Allow}\}$
+\STATE $q' \leftarrow \text{ObfuscationDecoder.decode}(q)$
+\STATE $D' \leftarrow \{\text{ObfuscationDecoder.decode}(d_i) \mid d_i \in D\}$
+\STATE \COMMENT{Lines 4--5 execute concurrently via ThreadPoolExecutor}
+\STATE $S_{L1} \leftarrow \max_{d'_i \in D'} \text{AnomalyDetector}(d'_i)$
+       \COMMENT{Document chunks only; query OOD score not computed}
+\STATE $S_{L2} \leftarrow \max\!\left(\text{IntentClassifier}(q'),\,
+         \max_{d'_i \in D'} \text{IntentClassifier}(d'_i)\right)$
+\IF{$S_{L1} > \tau_{L1}$ \OR $S_{L2} > \tau_{early}$}
+    \RETURN \text{Block}
+\ENDIF
+\STATE $\delta_s \leftarrow \text{SchemaPatternCheck}(q',D',r)$
+\STATE $\delta_b \leftarrow \text{BoundaryCheck}(q',D',r)$
+\STATE $S_{L3} \leftarrow 0$
+\IF{response $r$ is available}
+    \IF{Canary token in $r$}
+        \RETURN \text{Block}
+    \ENDIF
+    \STATE $S_{L3} \leftarrow \text{CrossEncoder}(\Phi, r)$
+           \COMMENT{Exploratory; see Section~\ref{sec:l3}}
+\ENDIF
+\STATE $\mathbf{f} \leftarrow [S_{L1}, S_{L2}, \delta_s, \delta_b, S_{L3},
+         S_{L1}{\cdot}S_{L2}, S_{L1}{\cdot}S_{L3}]^{\top}$
+\STATE $P_{\text{risk}} \leftarrow \text{LogisticRegression}(\mathbf{f})$
+\STATE $P_{\text{risk}}^{*} \leftarrow \text{KeywordAdjust}(P_{\text{risk}},
+         q', D')$
+\RETURN $\text{Decision}(P_{\text{risk}}^{*},\, \tau_{\text{block}},\,
+         \tau_{\text{monitor}})$
+\end{algorithmic}
+\end{algorithm}
+
 \subsection{Layer 1: OOD Anomaly Detection}
 
-\subsubsection{Embedding and Corpus Modeling} Layer~1 models the manifold of benign document syntax by training an ensemble on 8,058 clean documents (MITRE ATT\&CK $\approx$858, Wikipedia $\approx$5,000, technical docs $\approx$200, MS MARCO $\approx$2,000). Each document chunk is embedded with all-MiniLM-L6-v2~\cite{allminilm2021,reimers2019} to produce a 384-dimensional semantic vector ($\mathbf{e} \in \mathbb{R}^{384}$).
-
-\subsubsection{Ensemble Anomaly Detectors} Three unsupervised anomaly detection models are trained on the embedded clean corpus: Isolation Forest~\cite{liu2008} (contamination = 0.05, full corpus), ECOD~\cite{li2023} (parameter-free tail probability, full corpus), and One-Class SVM~\cite{scholkopf2000} (RBF kernel, trained on a stratified 2,000-sample subset to bound training and inference latency). The layer anomaly score is computed as the maximum score across the ensemble:
+Layer~1 models the manifold of benign document syntax by training an ensemble
+on 8,058 clean documents (MITRE ATT\&CK $\approx$858, Wikipedia
+$\approx$5,000, technical docs $\approx$200,
+MS MARCO~\cite{bajaj2016} $\approx$2,000), each embedded with
+all-MiniLM-L6-v2~\cite{allminilm2021,reimers2019}
+($\mathbf{e} \in \mathbb{R}^{384}$).
+Three unsupervised detectors are trained: Isolation Forest~\cite{liu2008}
+(contamination=0.08, full corpus), ECOD~\cite{li2023} (parameter-free, full
+corpus), and One-Class SVM~\cite{scholkopf2000} (RBF kernel, fixed
+2,000-sample subset drawn with \texttt{random\_state=42}).
+Layer~1 is applied exclusively to document chunks; query-level anomaly
+detection is not performed, as injection queries often resemble benign
+retrieval phrasing.
+Each raw score is min--max normalized:
 \begin{equation}
-S_{L1} = \max_{j \in \{\text{IForest, ECOD, OCSVM}\}} S_j(\mathbf{e}) \label{eq:l1}
+\tilde{S}_j(\mathbf{e}) =
+\operatorname{clip}\!\left(
+\frac{S_j^{\mathrm{raw}}(\mathbf{e}) - m_j}{M_j - m_j},0,1
+\right)
 \end{equation}
-
-\subsubsection{Anomaly Blocking Policy} The orchestrator enforces a hard block if the maximum score across all retrieved document chunks exceeds the threshold: $S_{L1}^{\mathrm{max}\text{-}\mathrm{chunk}} \geq \tau_{L1} = 0.85$. In the final holdout, Layer~1 contributed \textbf{13 unique true-positive attributions} (4.4\% of 297 total TPs); Layer~2 provided 272 (91.6\%), and the Meta-Aggregator contributed an additional 12 borderline detections (4.0\%).
+The per-chunk and pipeline-level scores are:
+\begin{equation}
+S_{L1}(\mathbf{e}) =
+\frac{1}{3}\!\sum_{j}\tilde{S}_j(\mathbf{e}), \quad
+S_{L1}^{\text{pipeline}} = \max_{d'_i \in D'} S_{L1}(\mathbf{e}_{d'_i})
+\end{equation}
+A hard block is issued when
+$S_{L1}^{\text{pipeline}} > \tau_{L1} = 0.85$.
+In the final holdout, Layer~1 triggered on 13 TPs under the first-trigger
+attribution rule (4.4\% inclusive; 1 exclusive, 0.34\%; see
+Section~\ref{sec:results}).
 
 \subsection{Layer 2: Dual-Stage Intent Classifier}
 
-\subsubsection{Stage 1a -- Query-Level Classification} The primary model is protectai/deberta-v3-base-prompt-injection-v2 (DeBERTa-v3~\cite{he2023}, ONNX-exported~\cite{onnxruntime2022}). For non-English inputs and uncertain predictions, an xlm-roberta-large-xnli~\cite{conneau2020} multilingual fallback activates. The query-level score is computed as:
-\begin{equation}
-S_{L2}^{\mathrm{query}} = \max\!\left(P_{\mathrm{attack}}(q),\, P_{\mathrm{attack}}^{\mathrm{multi}}(q)\right)
-\end{equation}
-
-\subsubsection{Stage 1b -- Document Chunk Scanning} Layer~2 is applied to every retrieved chunk $d_i \in D$. Chunks with pattern score $> 0.60$ are passed to the full DeBERTa classifier:
-\begin{equation}
-S_{L2}^{\mathrm{doc}} = \max_i P_{\mathrm{attack}}(d_i) \label{eq:l2doc}
-\end{equation}
-
-\subsubsection{Composite Score and Early Exit} The query and document scores combine to produce a single Layer 2 composite score:
-\begin{equation}
-S_{L2} = \max\!\left(S_{L2}^{\mathrm{query}},\, S_{L2}^{\mathrm{doc}}\right) \label{eq:l2composite}
-\end{equation}
-This stage enables detection of indirect injection buried in otherwise benign-seeming documents, a structural capability unavailable to query-only classifiers. When $S_{L2} \geq \tau_{early} = 0.60$, the orchestrator immediately blocks the request without invoking Layer~3. In the final holdout, 287 total samples triggered early exit: 284 true-positive prevention decisions and 3 benign false positives. Layer~2 provided \textbf{272 of 297 true-positive attributions} (91.6\%), confirming it as the primary detection engine.
+The primary model is protectai/deberta-v3-base-prompt-injection-v2
+(DeBERTa-v3~\cite{he2023}, ONNX-exported~\cite{onnxruntime2022}); the
+multilingual fallback (xlm-roberta-large-xnli~\cite{conneau2020}) activates
+on non-English input (langdetect confidence $>0.5$~\cite{langdetect2014})
+or primary model attack probability below 0.60.
+Layer~2 is applied to both the query and each retrieved chunk:
+\begin{align}
+S_{L2}^{q} &= \max\!\left(P_{\mathrm{attack}}(q),\;
+  P_{\mathrm{attack}}^{\mathrm{multi}}(q)\right), \notag\\
+S_{L2}^{d} &= \max_i \max\!\left(P_{\mathrm{attack}}(d_i),\;
+  P_{\mathrm{pattern}}(d_i)\right), \notag\\
+S_{L2}     &= \max\!\left(S_{L2}^{q},\; S_{L2}^{d}\right)
+\end{align}
+When $S_{L2} > \tau_{early} = 0.60$, the orchestrator immediately blocks.
+In the final holdout, 287 samples triggered early exit: 285 true-positive
+and 2 benign false positives.
+Layer~2 fired (inclusively) on 284 of 297 TPs; under the first-trigger
+attribution rule, Layer~2 receives exclusive credit for 272 TPs (91.6\%).
 
 \subsection{Layer 3: Behavioral Monitor}
+\label{sec:l3}
 
-Layer~3 evaluates the generated response $r$, targeting attacks that succeed in reaching the LLM and manipulating its output. Four components operate in sequence:
+Layer~3 is invoked only after Layers~1--2 do not early-exit. In the primary
+static holdout, no generated response is supplied; therefore Layer~3 operates
+on the query and retrieved chunks only. It applies length limits
+($|q|\leq500$, $|D|\leq3000$), role/instruction-marker checks, prompt-stuffing
+checks, retrieved-document injection regexes, and sensitive-data/exfiltration
+boundary checks. These signals feed the meta-aggregator through $\delta_s$,
+$\delta_b$, and $S_{L3}$; boundary violations at or above the configured
+hard-block count trigger meta-level escalation.
 
-\subsubsection{Schema Enforcement and Exfiltration Detection} The response is first validated against a Pydantic schema enforcing structural rules (e.g., maximum response length of 1,500 characters). Simultaneously, three regular expression patterns ($P_{email}$, $P_{api\_key}$, $P_{cred}$) scan the output $r$ for sensitive data signatures. Any matched patterns trigger an immediate veto block to prevent exfiltration.
-
-\subsubsection{Semantic Consistency Scoring} A cross-encoder model (\textit{ms-marco-MiniLM-L-12-v2}) evaluates the semantic consistency between the query $q$ and the generated response $r$: $S_{L3} = \mathrm{CrossEncoder}(q, r)$. A response complying with an injection payload rather than the user query yields a low consistency score, triggering a block if $S_{L3} < \tau_{L3} = 0.55$.
-
-\subsubsection{Cryptographic Canary Tokens} At initialization, 3 high-entropy honeytoken strings are injected into the vector store as decoy documents (\textit{RAG\_CANARY\_TOKEN} environment variable). The orchestrator performs pre-layer canary checks on the incoming query, retrieved document chunks, and generated response; any detection triggers an immediate veto hard-block before or after layer processing, bypassing the meta-aggregator entirely.
-
-\subsubsection{Stateful Crescendo Detection} A session-level drift tracker maintains the history of the last 5 pipeline decisions. A weighted drift score is computed: if it exceeds $\tau_{drift} = 0.72$, a multi-turn crescendo attack is flagged.
+When a generated response $r$ is available, Layer~3 additionally validates a
+structured JSON response schema~\cite{pydantic2024} (answer length
+$\leq1500$, confidence in $[0,1]$, nonempty topics), checks for canary-token
+leakage, and computes a cross-encoder response-consistency score using
+\textit{ms-marco-MiniLM-L-12-v2}. These response-stage functions are evaluated
+separately in Section~\ref{sec:l3bench}; they are not part of the primary
+sealed-holdout claim. A session-level drift tracker is implemented but is not
+used in the final holdout because no session identifiers are supplied.
 
 \subsection{Meta-Aggregator}
 
-\subsubsection{Evidence Aggregation} A calibrated Logistic Regression model (wrapped in scikit-learn's \textit{CalibratedClassifierCV}) acts as the final decision aggregator. It accepts a 7-dimensional feature vector comprising the L1 max-anomaly score ($S_{L1}$), L2 attack probability ($S_{L2}$), L3 schema-violation flag ($\delta_s \in \{0, 1\}$), normalized boundary-violation count ($\delta_b \in [0, 1]$), L3 response consistency ($S_{L3}$), and two cross-layer interaction terms:
-\begin{equation}
-\mathbf{f} = \bigl[ S_{L1},\, S_{L2},\, \delta_s,\, \delta_b,\, S_{L3},\, S_{L1}{\cdot}S_{L2},\, S_{L1}{\cdot}S_{L3} \bigr]^{\top}
-\label{eq:feat}
-\end{equation}
-The interaction terms capture correlated cross-layer signals to improve meta-classification accuracy.
+The meta-aggregator is a supervised calibrated Logistic Regression
+model~\cite{pedregosa2011}, not an unsupervised ensemble component.
+The frozen artifact was trained from saved pipeline feature logs
+(\texttt{logs/pipeline\_logs.jsonl}, $n=322$: 142 attacks, 180 benign)
+generated by running the actual Layer~1--3 components on non-holdout
+training pools: HackAPrompt direct attacks excluding the
+\texttt{hackaprompt\_holdout\_seed42.csv} prompts, InjecAgent indirect
+document-injection samples, and benign queries from
+\texttt{extended\_benign.csv}/\texttt{benign\_queries.jsonl} selected by the
+deterministic training split. A TF--IDF exact/semantic contamination check
+against the legacy evaluation pools was run before fitting; the sealed
+$n=868$ final holdout was generated after threshold freezing and is not used
+to fit the meta-aggregator. The base classifier is \textit{LogisticRegressionCV}
+with five-fold stratified cross-validation and balanced class weighting, then
+wrapped with \textit{CalibratedClassifierCV} using five-fold isotonic
+calibration rather than same-set prefit calibration. A separate five-fold
+outer audit on the 322 training feature rows reports accuracy
+$0.9688 \pm 0.0331$ and ROC-AUC $0.9861 \pm 0.0218$; coefficient
+mean/std values are recorded in
+\texttt{logs/meta\_aggregator\_cv\_report.json}. The sealed holdout metrics
+below remain the primary estimate of end-to-end generalization.
 
-\subsubsection{Three-Tier Decision Policy} The model outputs a calibrated risk probability $P_{\mathrm{risk}} \in [0, 1]$. All thresholds were selected by grid search on a 20\% development set subject to $\mathrm{FPR} \leq 1\%$ (benign scores clustered 0.12--0.30, motivating $\tau_{\mathrm{block}}=0.35$, $\tau_{\mathrm{monitor}}=0.31$, $\tau_{early}=0.60$, $\tau_{L1}=0.85$, $\tau_{L3}=0.55$):
+The fitted model accepts a 7-dimensional feature vector:
+\begin{equation}
+\mathbf{f} = \bigl[ S_{L1}^{\text{pipeline}},\, S_{L2},\, \delta_s,\,
+  \delta_b,\, S_{L3},\, S_{L1}^{\text{pipeline}}{\cdot}S_{L2},\,
+  S_{L1}^{\text{pipeline}}{\cdot}S_{L3} \bigr]^{\top}
+\end{equation}
+A deterministic keyword-risk adjustment then applies:
+\begin{equation}
+P_{\mathrm{risk}}^{*} = \min\!\left(P_{\mathrm{risk}} + \delta_{kw},\;
+  1.0\right), \quad \delta_{kw} \in \{0,\,0.10,\,0.20\}
+\end{equation}
+The three-tier decision policy is:
 \begin{equation}
 \text{Decision} = \begin{cases}
-\text{Block}   & P_{\mathrm{risk}} \geq \tau_{\mathrm{block}} = 0.35 \text{ or canary tripped}\\
-\text{Monitor} & 0.31 \leq P_{\mathrm{risk}} < 0.35\\
-\text{Allow}   & P_{\mathrm{risk}} < 0.31
+\text{Block}   & \text{veto or } S_{L1}\!>\!\tau_{L1}
+                 \text{ or } S_{L2}\!>\!\tau_{early}\\
+\text{Block}   & P_{\mathrm{risk}}^{*} > \tau_{\mathrm{block}} = 0.35\\
+\text{Monitor} & 0.31 < P_{\mathrm{risk}}^{*} \leq 0.35\\
+\text{Allow}   & P_{\mathrm{risk}}^{*} \leq 0.31
 \end{cases}
 \end{equation}
 
-%-----------------------------------------------------------------------
+%% ----------------------------------------------------------------
 \section{Experimental Setup}
+%% ----------------------------------------------------------------
 
 \subsection{Benchmark Dataset}
 
-The final holdout was constructed under a strict no-contamination protocol; all samples were SHA-256 hash-deduplicated against training and development sets. Table~\ref{tab:dataset} summarizes the benchmark composition ($n = 868$).
+All samples were SHA-256 hash-deduplicated against training and development
+sets before threshold freezing.
+Table~\ref{tab:dataset} summarizes evaluation set compositions.
+
+\textbf{Dataset construction.}
+The 543 benign queries are synthetic or manually authored post-freeze:
+453 carry the provenance tag
+\texttt{claude\_sonnet\_4\_6\_generated\_2026-06-16}, 75 carry
+\texttt{blind\_llm\_generated\_post\_freeze}, and 15 are
+\texttt{manually\_written\_post\_freeze\_benign\_only}. They cover HR,
+finance, IT support, legal compliance, medical records retrieval, and
+procurement; no real enterprise traffic was used.
+The 250 attack samples span 18 families recorded in the \texttt{attack\_type}
+field, and the 75 evasion samples span 12 \texttt{evasion\_family} values
+including Base64, hex, leetspeak, homoglyph, whitespace-splitting, and
+markdown-hiding variants.
+All attack and evasion samples were generated after threshold freezing in
+blind sessions that did not expose detector internals or thresholds; no public
+benchmark samples (e.g., InjecAgent, HackAPrompt) appear in the sealed
+holdout.
+The synthetic/manually authored composition limits generalizability to
+real-world attack distributions. As a companion public-benchmark check, the
+frozen pipeline was also run on InjecAgent plus the stratified HackAPrompt
+holdout subset available in the repository ($n=107$ attack cases), achieving
+ADR~=~100\% with one first-trigger Layer~1 detection and 106 Layer~2
+detections; because this companion split contains attacks only, it does not
+estimate benign FPR.
 
 \begin{table}[t]
-\caption{Final Holdout Benchmark Composition}
+\caption{Evaluation Set Compositions}
 \label{tab:dataset}
 \centering
-\begin{tabular}{lll}
+\renewcommand{\arraystretch}{0.9}
+\begin{tabular}{llccc}
 \toprule
-\textbf{Split} & \textbf{Description} & \textbf{$n$}\\
+\textbf{Set} & \textbf{Purpose} & \textbf{Atk./Ev.} & \textbf{Benign}
+  & \textbf{Total}\\
 \midrule
-attacks.jsonl  & Direct + indirect injection payloads & 250\\
-benign.jsonl   & Enterprise queries (HR, Finance, Medical, IT) & 543\\
-evasions.jsonl & 11 obfuscation/evasion families & 75\\
+Sealed holdout   & Primary results           & 325 & 543 & 868\\
+Classical subset & Table~\ref{tab:classical} & 348 & 500 & 848\\
+Live-API subset  & Table~\ref{tab:commercial} & 356 & 500 & 856\\
 \midrule
-\textbf{Total} & & \textbf{868}\\
+\multicolumn{5}{@{}p{0.96\columnwidth}@{}}{\scriptsize
+Sealed holdout attack/evasion split: 250 standard attacks + 75 evasions.}\\
 \bottomrule
 \end{tabular}
 \end{table}
 
 \subsection{Evaluation Protocol and Metrics}
 
-All thresholds were frozen before final holdout evaluation (Git commit \texttt{3ef152293d76b81c0a080a8d26d67e010297d7f7}, stored in \texttt{logs/frozen\_thresholds.json}). Metrics reported: ADR (Attack Detection Rate = blocked), FPR on the benign subset, Precision, F1, ROC-AUC, and AUC-PR. Confidence intervals: Wilson score for ADR/FPR/Precision; bootstrap percentile ($B = 1000$) for F1 and AUC. Statistical significance for commercial comparisons uses McNemar's test~\cite{mcnemar1947} on paired discordant counts.
+All thresholds were frozen before final holdout evaluation.
 
-Hardware: AMD Ryzen~9 5900X, 64\,GB DDR4, NVIDIA RTX~3080, Windows~11, Python~3.11.9, PyTorch~2.2.2, ONNX Runtime~1.18.0.
+\textbf{Threshold selection.}
+Thresholds were selected through a mixed process rather than a single
+documented development set.
+$\tau_{L1}=0.85$ and $\tau_{early}=0.60$ were set by manual inspection of
+component score distributions on training data; $\tau_{block}=0.35$ and
+$\tau_{monitor}=0.31$ were selected from score distributions on a prior
+423-benign development run.
+No formal grid-search objective was applied uniformly across all four
+thresholds; this informal process is a reproducibility limitation.
+All four thresholds were frozen before the sealed holdout evaluation, and the
+development data are SHA-256 deduplicated against the holdout.
 
-%-----------------------------------------------------------------------
+\textbf{Cache integrity verification.}
+All three caches (semantic document cache, L1 exact-scan cache, L2
+document-scan cache) contained zero entries at holdout start, confirming
+cold-start conditions with no pre-population from training data.
+A pairwise cosine similarity check between all 868 holdout sample embeddings
+and the full 8,058-sample training corpus found zero holdout samples within
+the $\tau_{cache} = 0.98$ deduplication threshold (maximum similarity found:
+0.7902; mean: 0.4951), confirming zero training-holdout contamination.
+The 87.2\% within-evaluation cache hit rate (757/868) is driven by the
+SHA-256-keyed exact-match cache: 757 holdout queries retrieved document sets
+byte-identical to a prior query's retrieved set, reflecting limited diversity
+in the fixed test knowledge base; the semantic cosine cache contributed no
+hits, consistent with zero training similarity $\geq 0.98$.
+The latency implication is that the 37.7\,ms benign-path mean is a
+cache-hit-path measurement; in the current sealed-run ordering, all 543 benign
+rows are resolved after the exact document caches have already been populated
+by earlier samples, so benign cache-miss latency is not measured by this run.
+
+\emph{Attack Detection Rate} (ADR = recall on attack+evasion class), FPR,
+Precision, F1, ROC-AUC, and trapezoidal PR-AUC are reported.
+Only hard-block decisions count as positive; Monitor is non-blocking.
+Wilson score CIs for ADR/FPR/Precision; stratified bootstrap ($B=10{,}000$)
+for F1, ROC-AUC, PR-AUC.
+Paired statistical testing (e.g., McNemar's test~\cite{mcnemar1947}) is
+withheld for the commercial comparison: inputs differ between systems,
+violating the requirement for identical paired observations.
+
+\textbf{Latency measurement.}
+Latency was measured as wall-clock time via Python
+\texttt{time.perf\_counter()} with no warmup runs.
+Model loading (all-MiniLM, DeBERTa ONNX, cross-encoder, IForest, OCSVM)
+occurs once before the first query; the first-query latency was
+1{,}685.8\,ms, after which per-query latency stabilized; the reported mean
+includes this single cold-start query.
+ONNX Runtime used CPU-only inference; GPU was not used.
+Live-API baseline latencies were measured from the same machine using the
+same script.
+The reported 37.7\,ms benign-path mean is a \emph{within-evaluation
+cache-hit path}: all 543 benign rows in the current sealed-run ordering hit
+the SHA-256 exact-match document caches populated by earlier attack/evasion
+samples. A production-representative novel-query benign cache-miss mean is
+not separately reported.
+
+Hardware: AMD Ryzen~9 5900X, 64\,GB DDR4, NVIDIA RTX~3080, Windows~11,
+Python~3.11.9, PyTorch~2.2.2, ONNX Runtime~1.18.0.
+
+%% ----------------------------------------------------------------
 \section{Results}
+\label{sec:results}
+%% ----------------------------------------------------------------
 
 \subsection{Final Holdout Performance}
 
-Table~\ref{tab:results} reports RAG-Shield's performance on the sealed $n = 868$ benchmark with frozen thresholds. The system correctly allows 540/543 benign queries (99.45\% specificity) and blocks 297 of 325 attack+evasion samples. The 287 early-exit triggers consist of 284 true-positive decisions and 3 benign false positives. The final-holdout ROC and precision-recall curves are shown in Fig.~\ref{fig:roc_pr}. Layer~2 receives 272 of 297 true-positive attributions (91.6\%), Layer~1 receives 13 (4.4\%), and the Meta-Aggregator contributes 12 borderline detections (4.0\%), confirming document-level neural intent classification as the dominant signal.
+Table~\ref{tab:results} reports performance on the sealed $n = 868$
+benchmark.
+Benign specificity: 99.45\% (540/543).
+TP attribution uses a first-trigger rule: Layer~1 receives credit when
+$S_{L1} > \tau_{L1}$ regardless of whether Layer~2 also fires; Layer~2
+receives credit only for TPs where $S_{L2} > \tau_{early}$ and
+$S_{L1} \leq \tau_{L1}$; the meta-aggregator receives credit for TPs below
+both early-exit thresholds.
+Under this rule, Layer~1 is credited with 13 TPs (12 of which were also
+caught by Layer~2; 1 was exclusive to Layer~1); Layer~2 receives exclusive
+credit for 272 TPs; and the meta-aggregator recovered the remaining 12 TPs
+($13 + 272 + 12 = 297$).
+Of 287 early-exit triggers, 285 were true-positive and 2 were benign false
+positives; the remaining FP was a meta-aggregator borderline decision.
+All 28 FNs were fully allowed ($P_{\mathrm{risk}}^{*} < 0.31$); none fell
+in the Monitor zone.
+Bayes projections at FPR~=~0.55\%: precision = 99.00\% at 37.4\% holdout
+prevalence, 89.70\% at 5\%, and 62.56\% at 1\% (representative enterprise).
+See Fig.~\ref{fig:roc_pr}.
 
-\begin{table*}[t]
-\caption{RAG-Shield Final Holdout Results ($n=868$, Frozen Thresholds, Git \textnormal{\texttt{3ef152293d76b81c0a080a8d26d67e010297d7f7}})}
+\begin{table}[t]
+\caption{RAG-Shield Final Holdout Results ($n=868$, Frozen Thresholds)}
 \label{tab:results}
 \centering
+\renewcommand{\arraystretch}{0.9}
 \begin{tabular}{lcc}
 \toprule
 \textbf{Metric} & \textbf{Value} & \textbf{95\% CI}\\
@@ -328,227 +595,503 @@ True Positives  & 297    & ---\\
 False Positives & 3      & ---\\
 False Negatives & 28     & ---\\
 True Negatives  & 540    & ---\\
-\textbf{ADR (Recall)}    & \textbf{91.38\%} & [87.83\%, 93.97\%]\\
-FPR             & 0.55\% & [0.19\%, 1.61\%]\\
-Precision       & 99.00\% & [97.10\%, 99.66\%]\\
-\textbf{F1 Score}        & \textbf{95.04\%} & [93.16\%, 96.68\%]\\
-ROC-AUC         & 0.9576 & [0.9418, 0.9720]\\
-AUC-PR          & 0.9723 & ---\\
-Mean Lat.\ (ms) & 600.3  & ---\\
-P95 Lat.\ (ms)  & 2,663.8 & ---\\
+Attacks (Block/Monitor/Allow) & 297 / 0 / 28 & ---\\
+\textbf{ADR}      & \textbf{91.38\%} & [87.83\%, 93.97\%]\\
+FPR               & 0.55\%  & [0.19\%, 1.61\%]\\
+Precision         & 99.00\% & [97.10\%, 99.66\%]\\
+\textbf{F1 Score} & \textbf{95.04\%} & [93.20\%, 96.68\%]\\
+ROC-AUC           & 0.9576  & [0.9419, 0.9721]\\
+PR-AUC$^\S$       & 0.9723  & [0.9615, 0.9819]\\
+Mean Lat.\ (ms)   & 562.95  & ---\\
+P95 Lat.\ (ms)$^\dagger$          & 3{,}829 & ---\\
+\midrule
+Benign cached-path mean (ms)$^\ddagger$ & 37.7    & ---\\
+Benign cached-path P95 (ms)$^\ddagger$  & 41.7    & ---\\
 \bottomrule
+\multicolumn{3}{@{}p{0.88\columnwidth}@{}}{\scriptsize
+  $^\dagger$P95 from OCSVM on long attack-path chunks.\;
+  $^\ddagger$Benign only ($n\!=\!543$); dominated by within-evaluation
+    exact-cache hits and not a novel-query steady-state estimate.\;
+  $^\S$Trapezoidal PR-AUC; at 1\%/5\% prevalence:
+    prec.$\approx$62.6\%/89.7\%.}\\
 \end{tabular}
-\end{table*}
+\end{table}
 
 \begin{figure}[t]
 \centering
-\includegraphics[width=\columnwidth]{fig2_roc_pr.png}
-\caption{Final holdout discrimination curves ($n = 868$). Left: ROC (AUC\,=\,0.9576). Right: PR curve (AUC\,=\,0.9723), random baseline at 0.374.}
+\includegraphics[width=\columnwidth]{figures/fig2_roc_pr.png}
+\caption{Final holdout discrimination curves ($n = 868$). Left: ROC
+(AUC\,=\,0.9576). Right: PR curve (PR-AUC\,=\,0.9723), random baseline
+at 0.374.}
 \label{fig:roc_pr}
 \end{figure}
 
 \subsection{Per-Layer Latency}
 
-Table~\ref{tab:latency} details the per-layer latency observed during final holdout evaluation. Parallel execution of L1 and L2 reduces combined wall clock to 558\,ms; L1 mean latency is 434\,ms and L2 mean latency is 165\,ms. L3's 0.18\,ms mean is averaged over all 868 runs; 287 early-exit cases skip L3 entirely (true per-call cross-encoder inference: $\approx$30--50\,ms).
-
-\begin{table}[t]
-\caption{Per-Layer Latency (Final Holdout, $n=868$)}
-\label{tab:latency}
-\centering
-\begin{tabular}{lcc}
-\toprule
-\textbf{Component} & \textbf{Mean (ms)} & \textbf{P95 (ms)}\\
-\midrule
-Layer 1 (IForest+ECOD+OCSVM)     & 434.11  & 2,351.42\\
-Layer 2 (DeBERTa ONNX, q+docs)   & 164.85  & 629.74\\
-L1+L2 Wall Clock (parallel)      & 558.31  & 2,631.45\\
-Layer 3 (Cross-Enc.+canary+regex) & 0.18   & 0.40\\
-Meta-Aggregator (LogReg)         & 1.00    & 2.25\\
-\midrule
-\textbf{Total Pipeline}          & \textbf{600.3} & \textbf{2,663.8}\\
-\bottomrule
-\end{tabular}
-\end{table}
+Layer~1 (IForest+ECOD+OCSVM) accounts for 367.52\,ms mean and 3{,}679\,ms
+P95; Layer~2 (DeBERTa ONNX, query+docs) contributes 111.25\,ms mean.
+Parallel L1+L2 wall clock: 412.41\,ms mean, 3{,}684\,ms P95.
+The 37.7\,ms benign cached-path mean is measured only on cache-hit benign
+rows; the 87.2\% within-evaluation cache hit rate reflects byte-identical
+document-set retrieval within the fixed test knowledge base, confirmed via
+cold-start verification and zero training-holdout contamination
+(Section~\ref{sec:results}). Because the sealed-run ordering provides no
+benign cache-miss estimate, this cached-path mean should not be interpreted
+as steady-state latency under novel-query traffic. LLM-based guardrails impose
+3{,}326--5{,}251\,ms universally on all
+traffic in the measured live-API configuration.
+The 3.9$\times$ difference between the sealed holdout mean (562.95\,ms) and
+the commercial-comparison mean (2,187.28\,ms, Table~\ref{tab:commercial})
+reflects different evaluation conditions: the holdout benefits from an 87.2\%
+within-evaluation cache-hit rate, while the commercial run used a fresh cache
+with a higher attack fraction (41.6\% vs.\ 37.4\%), resulting in more
+uncached attack-path OCSVM scans.
 
 \subsection{Ablation Study}
 
-Table~\ref{tab:ablation} quantifies the marginal contribution of each component. L2 alone achieves 86.73\% ADR---just 0.31\,pp below the full ensemble---confirming transformer-based intent classification extended to document-level scanning as the dominant detection mechanism. L1 alone achieves 0.00\% FPR but only 6.48\% ADR; its conservative threshold ($\tau_{L1} = 0.85$) is set to maintain zero false positives on technical documents. The L1+L2 union gains 0.31\,pp over L2 alone (282 vs.\ 281 TPs), confirming structural complementarity. The meta-aggregator's principal benefit is the Monitor tier, separating high-confidence blocks from uncertain cases warranting analyst review without inflating FPR.
-
-Cache efficiency was high: both L1 and L2 document scanning registered \textbf{757 cache hits} across 868 runs ($\approx$87.2\% hit rate).
+Table~\ref{tab:ablation} quantifies marginal component contributions.
+L2 alone achieves 87.38\% ADR; the full pipeline reaches 91.38\% via 12
+additional meta-aggregator detections.
+On the same sealed holdout, the full pipeline improves ROC-AUC from 0.9440
+(L2 only) to 0.9576; this same-data comparison is distinct from
+Table~\ref{tab:classical}, where DeBERTa's 0.9803 ROC-AUC is measured on an
+easier 848-sample classical subset without the 75 sealed evasion cases.
+For L2-only versus Full on the sealed holdout, an exact binomial/sign test
+on attack-detection discordants gives 13 Full-only detections versus 0
+L2-only detections ($p=0.00024$). Over all labels, McNemar's exact paired
+test gives 13 Full-only-correct cases versus 1 L2-only-correct case
+($p=0.00183$).
+The ``Full (no Decoder)'' row---evaluated on the 75-evasion subset
+only---quantifies the ObfuscationDecoder contribution.
+The 1-TP difference between the ``L1~Only'' row (12~TPs standalone) and
+Layer~1's inclusive trigger count in the full pipeline (13~TPs) reflects the
+ObfuscationDecoder: one encoded attack exceeds $\tau_{L1}=0.85$ only after
+decoding, which is not applied in standalone ablation rows.
 
 \begin{table}[t]
-\caption{Component Ablation Study ($n=867$). L3 requires LLM output $r$; ablation rows without LLM generation show L3 as inactive (thus L2+L3$=$L2 in TP count).}
+\caption{Component Ablation ($n=868$). ``No Dec.'' uses the 75-evasion
+subset only with the ObfuscationDecoder disabled.}
 \label{tab:ablation}
 \centering
-\begin{tabular}{lcccc}
+\scriptsize
+\renewcommand{\arraystretch}{0.9}
+\begin{tabular}{lccccc}
 \toprule
-\textbf{Config} & \textbf{ADR} & \textbf{FPR} & \textbf{F1} & \textbf{TP/FN}\\
+\textbf{Config} & \textbf{ADR} & \textbf{FPR} & \textbf{F1}
+  & \textbf{ROC-AUC} & \textbf{TP/FN}\\
 \midrule
-L1 Only          & 6.48\%  & 0.00\% & 0.1217 & 21/303\\
-L2 Only          & 86.73\% & 0.37\% & 0.9259 & 281/43\\
-L3 Only          & 17.59\% & 0.00\% & 0.2992 & 57/267\\
-L1+L2 Union      & 87.04\% & 0.37\% & 0.9276 & 282/42\\
-L1+L3 Union      & 21.30\% & 0.00\% & 0.3511 & 69/255\\
-L2+L3 Union      & 86.73\% & 0.37\% & 0.9259 & 281/43\\
-Full (no Meta)   & 87.04\% & 0.37\% & 0.9276 & 282/42\\
-Full (Meta, Prev.)& 87.04\% & 0.37\% & 0.9276 & 282/42\\
-Full (Meta, Det.) & \textbf{87.35\%} & 0.37\% & \textbf{0.9294} & 283/41\\
+L1 Only  & 3.69\%  & 0.00\% & 7.12\%  & 0.6631 & 12/313\\
+L2 Only  & 87.38\% & 0.37\% & 92.96\% & 0.9440 & 284/41\\
+L3 Only$^\dagger$ & 11.08\% & 0.00\% & 19.94\%
+         & 0.5523 & 36/289\\
+L1+L2    & 87.69\% & 0.37\% & 93.14\% & 0.9532 & 285/40\\
+L1+L3    & 13.85\% & 0.00\% & 24.32\% & 0.6631 & 45/280\\
+L2+L3    & 87.69\% & 0.37\% & 93.14\% & 0.9440 & 285/40\\
+No Dec.$^\ddagger$ & 57.33\% & 0.00\% & 72.88\%
+         & --- & 43/32\\
+\textbf{Full} & \textbf{91.38\%} & 0.55\% & \textbf{95.04\%}
+              & \textbf{0.9576} & 297/28\\
 \bottomrule
+\multicolumn{6}{@{}p{0.97\columnwidth}@{}}{\scriptsize
+  $^\dagger$Static holdout; cross-encoder not invoked.\;
+  $^\ddagger$Evasion subset only ($n=75$).\;
+  L1+L3 and L1-only ROC-AUC are identical because ROC-AUC uses the
+  continuous risk score; L3 changed 33 binary veto decisions but did not
+  change any ranking scores in this run.}\\
 \end{tabular}
 \end{table}
 
+\subsection{Per-Attack-Type Breakdown}
+
+Of 18 attack categories, 10 achieve 100\% ADR on the 250 standard attacks.
+The three weakest are \textit{multi\_step\_attack} (60.0\%, $n$=15),
+\textit{business\_workflow\_manipulation} (50.0\%, $n$=4, exploratory), and
+\textit{data\_exfiltration} (85.9\%, $n$=64, contributing 9/28~FNs = 32.1\%).
+These categories distribute adversarial signal across turns or workflow steps,
+reducing per-chunk classifier confidence below $\tau_{early}=0.60$.
+
+\FloatBarrier
+\subsection{Response-Stage Layer~3 Benchmark}
+\label{sec:l3bench}
+
+We separately ran the final Layer~3 monitor on a deterministic response-stage
+benchmark ($n=220$: 161 attacks, 59 benign). This auxiliary test is not part
+of the primary sealed-holdout metric. The response monitor achieved
+ADR~=~70.19\% (113/161), FPR~=~10.17\% (6/59), F1~=~80.71\%, and mean
+latency~=~229.8\,ms. Canary leakage was detected in all 6 deterministic
+canary probes; schema violations were detected in 25/30 cases; sensitive
+response leakage in 18/30; exfiltration instructions in 27/30; and
+document-injection responses in 30/35. The cross-encoder consistency signal
+did not exceed $\tau_{L3}=0.55$ on consistency probes, so semantic
+response-consistency detection is not validated. The 10.17\% response-stage
+FPR is above the 1\% target, requiring negative-class recalibration before
+deployment.
+
 \subsection{Comparison with Baselines and Commercial Systems}
 
-\textbf{Classical baselines} ($n = 848$, Table~\ref{tab:classical}): RAG-Shield improves on standalone DeBERTa by +8.62\,pp ADR at zero additional FPR cost. On this comparison set (CPU only, no LLM I/O; distinct from the sealed holdout), RAG-Shield's 246.75\,ms total latency is 4.3$\times$ that of L2 alone (57.91\,ms)---a favorable security-latency trade-off. The keyword blocklist's 4.02\% ADR confirms surface-form filtering is inadequate.
+\textbf{Classical baselines} ($n = 848$, Table~\ref{tab:classical}):
+RAG-Shield improves on standalone DeBERTa by +13.51\,pp ADR at the selected
+operating point, with both systems producing 0 FPs on this subset.
 
-\textbf{Commercial guardrails} ($n = 856$ live-API subset, Table~\ref{tab:commercial}): RAG-Shield achieves +14.05\,pp ADR over Llama Prompt Guard~2 (93.54\% vs.\ 79.49\%, $p < 10^{-4}$, McNemar's test). LLM-based guardrails (NeMo: 7.58\%, Llama-3.1-8B: 29.78\%) fail on indirect injection because they evaluate query intent without scanning retrieved document chunks. RAG-Shield is 34\% faster than Llama-3.1-8B Guardrails and 58\% faster than NeMo Rails. Fig.~\ref{fig:comparison} visualizes baseline and commercial comparisons across the separate datasets.
+\textbf{Commercial guardrails} ($n = 856$ live-API subset,
+Table~\ref{tab:commercial}): \emph{deployment-configuration comparison,
+not model-quality comparison.}
+RAG-Shield receives query plus retrieved chunks; baselines are evaluated
+query-only.
+RAG-Shield achieves 93.54\% ADR and 3.20\% FPR---exceeding the 1\%
+enterprise target; recalibration is required before deployment.
+Paired statistical testing is withheld: the configuration gap means inputs
+differ between systems, preventing valid paired inference.
+LLM guardrails achieve lower ADR in this query-only configuration and impose
+3{,}326--5{,}251\,ms latency universally on all traffic; RAG-Shield's
+cached benign path averaged 37.7\,ms but is not a novel-query steady-state
+estimate.
+
+\textbf{Evasion coverage} ($n=75$, 12 families): Aggregate ADR = 93.33\%
+(70/75, 95\% Wilson CI $[85.3\%,\,97.1\%]$).
+The weakest family is \textit{malicious\_link\_injection} (33.3\%, $n=3$,
+CI $[6.1\%,\,79.2\%]$)---URL-embedded payloads that evade the
+ObfuscationDecoder; families with $n \leq 4$ carry wide CIs and are flagged
+as exploratory.
 
 \begin{table}[t]
 \caption{Classical Baseline Comparison ($n=848$: 348 attacks + 500 benign)}
 \label{tab:classical}
 \centering
+\renewcommand{\arraystretch}{0.9}
 \begin{tabular}{lcccc}
 \toprule
-\textbf{System} & \textbf{ADR} & \textbf{FPR} & \textbf{F1} & \textbf{AUC}\\
+\textbf{System} & \textbf{ADR} & \textbf{FPR} & \textbf{F1}
+  & \textbf{ROC-AUC}\\
 \midrule
-Keyword Blocklist  & 4.02\%  & 0.00\% & 0.077 & 0.5594\\
-DeBERTa (L2 only)  & 84.77\% & 0.00\% & 0.918 & 0.9803\\
-RAG-Shield (Full)  & \textbf{93.39\%} & 0.00\% & \textbf{0.966} & 0.9646\\
+Keyword Blocklist & 4.02\%  & 0.00\% & 7.73\%  & 0.5259\\
+DeBERTa (L2 only) & 84.77\% & 0.00\% & 91.76\% & 0.9870\\
+RAG-Shield (Full) & \textbf{98.28\%} & 0.00\%
+                  & \textbf{99.13\%} & 0.9971\\
 \bottomrule
 \end{tabular}
 \end{table}
 
-\begin{table}[t]
-\caption{Commercial Guardrail Comparison ($n=856$, Live API, McNemar vs.\ RAG-Shield)}
+\begin{table*}[t]
+\caption{Deployment Configuration Comparison ($n=856$: 356 attack/evasion
++ 500 benign). \textbf{Configuration gap}: RAG-Shield receives
+query~+~retrieved chunks; baselines evaluated query-only.
+Paired statistical testing withheld: inputs differ between systems.}
 \label{tab:commercial}
 \centering
-\begin{tabular}{lccccc}
+\renewcommand{\arraystretch}{0.9}
+\begin{tabular}{lcccc}
 \toprule
-\textbf{System} & \textbf{ADR} & \textbf{FPR} & \textbf{F1} & \textbf{Lat.\ (ms)} & \textbf{McNemar $p$}\\
+\textbf{System} & \textbf{ADR} & \textbf{FPR} & \textbf{F1}
+  & \textbf{Mean Lat.\ (ms)}\\
 \midrule
-Llama Prompt Guard~2    & 79.49\% & 0.40\% & 0.883 & 426.97   & $4.7\!\times\!10^{-5}$\\
-Llama-3.1-8B Guardrails & 29.78\% & 0.00\% & 0.459 & 3,326.14 & $1.2\!\times\!10^{-38}$\\
-NeMo Rail (Llama-3.1)   & 7.58\%  & 0.00\% & 0.141 & 5,250.91 & $2.3\!\times\!10^{-58}$\\
-RAG-Shield              & \textbf{93.54\%} & 3.20\% & \textbf{0.945} & 2,187.28 & ---\\
+Llama Prompt Guard~2~\cite{metapromptguard2024}
+                        & 79.49\% & 0.40\% & 88.30\% & 426.97\\
+Llama-3.1-8B Guardrails & 29.78\% & 0.00\% & 45.89\% & 3{,}326.14\\
+NVIDIA NeMo Guardrails  & 7.58\%  & 0.00\% & 14.10\% & 5{,}250.91\\
+RAG-Shield$^{*}$        & \textbf{93.54\%} & 3.20\%
+                        & \textbf{94.47\%} & 2{,}187.28\\
 \bottomrule
+\multicolumn{5}{@{}p{0.97\textwidth}@{}}{\scriptsize
+  $^{*}$RAG-Shield receives query\,+\,retrieved chunks; baselines do not
+  (configuration gap). FPR\,=\,3.20\% exceeds 1\% target; recalibration
+  required.\; Cached benign-path mean latency\,=\,37.7\,ms (incl.\
+  within-evaluation exact-cache hits); not a steady-state novel-query
+  estimate.}\\
 \end{tabular}
-\end{table}
+\end{table*}
 
-
-\begin{figure}[t]
-\centering
-\includegraphics[width=\columnwidth]{fig5_method_comparison.png}% Fig 3 in paper
-\caption{Baseline and commercial comparison (separate sets). Blue: ADR; red: FPR. Classical set $n = 848$; live commercial set $n = 856$. See Tables~\ref{tab:classical}--\ref{tab:commercial} for full metrics.}
-\label{fig:comparison}
-\end{figure}
-
-%-----------------------------------------------------------------------
+%% ----------------------------------------------------------------
 \section{Discussion and Limitations}
+%% ----------------------------------------------------------------
 
-\textbf{The Primacy of Document-Level Scanning.} The most significant architectural decision is Layer~2's Stage~1b chunk scanning. LLM-based guardrails achieve only 7--30\% ADR precisely because they evaluate query intent while treating document context as benign. RAG-Shield's document scanning enables detection of indirect payloads buried in otherwise legitimate documents---a structural capability that cannot be replicated by query-only classifiers.
+\textbf{Discussion.}
+RAG-Shield's document-level scanning (Layer~2, Stage~1b) detects indirect
+injections that bypass query-only deployments.
+Under the first-trigger attribution rule, Layer~2 exclusively handles
+272/297 TPs (91.6\%); the meta-aggregator recovers 12 additional borderline
+TPs at a cost of 1 additional FP over the simple layer unions.
 
-\textbf{FPR on the Commercial Subset.} The 3.20\% FPR in Table~\ref{tab:commercial} ($n=856$) exceeds the $\leq$1\% enterprise constraint because frozen holdout thresholds were preserved for a fair latency/ADR comparison; recalibrating $\tau_{\mathrm{block}}$ to 0.45 reduces commercial FPR below 1\% at an estimated $\approx$2\,pp ADR cost.
+\textbf{Layer~1 cost-benefit.}
+Under the first-trigger rule, Layer~1 exclusively detects 1/325 attacks
+(0.31\%, Wilson 95\% CI [0.02\%,\,1.7\%]) at a mean per-query cost of
+367.52\,ms for non-cached attack-path queries.
+The headline result reports the measured Full configuration for completeness
+and for conservative OOD coverage, but this marginal exclusive contribution
+does not justify Layer~1 as a mandatory production runtime detector on
+detection performance grounds alone in the current evaluation. A faster
+deployment candidate is the L2+L3 configuration in Table~\ref{tab:ablation}
+(ADR~=~87.69\%, FPR~=~0.37\%, mean latency~=~140.50\,ms), with Layer~1 run
+selectively for diagnostics, sampling, or high-risk traffic. A focused
+novel-encoding audit using Base32, Morse code, Caesar-shift, and Atbash
+document payloads ($n=20$) found 0 Layer~1 detections and 20 Layer~2
+detections, so the current evidence does not validate Layer~1 as an exclusive
+novel-encoding backstop. Layer~1 is therefore best interpreted as an optional
+OOD diagnostic and auxiliary meta-aggregator signal
+($S_{L1}^{\text{pipeline}} \cdot S_{L2}$ interaction term), not as a required
+runtime detector for the reported operating point.
 
-\textbf{Canary Tokens and the Exfiltration Gap.} The canary mechanism addresses a detection gap invisible to standard recall metrics: data exfiltration via compliant LLM behavior. An LLM may follow an injection instruction without any syntactic anomaly in the query, simply embedding stolen credentials in a plausible response. Layer~3's canary check and regex detector operate on model output, providing coverage Layers~1 and~2 cannot.
+\textbf{False-negative analysis.}
+All 28 FNs were fully allowed ($P_{\mathrm{risk}}^{*} < 0.31$); none
+reached the Monitor zone.
+Two failure modes dominate: \emph{adversarial signal dilution} (multi-turn
+attacks spread injection signal across chunks below $\tau_{early}=0.60$)
+and \emph{embedding-space proximity to benign text} (exfiltration payloads
+blend retrieval-style phrasing, evading the OCSVM boundary).
+A representative five-turn \textit{multi\_step\_attack} yields isolated
+turn-5 chunk score 0.51 and $P_{\mathrm{risk}}^{*}=0.28$---below all
+thresholds---recoverable only by integrating the crescendo across turns.
 
-\textbf{Precision-Recall Trade-Off.} RAG-Shield's operating point prioritizes precision (99.00\%) over recall (91.38\%): enterprise false positives impose direct user costs and risk disabling the guardrail. The AUC-PR of 0.9723 supports this choice; practitioners may lower $\tau_{block}$ to trade precision for recall without retraining.
+\textbf{False-positive analysis.}
+The 3 false positives were: (1)~a query retrieving Type~2 diabetes patient
+records, flagged by Layer~2 for retrieval-command phrasing; (2)~a query
+retrieving open finance purchase orders pending approval, flagged for
+authoritative-command framing; and (3)~a query drafting a self-service
+password reset announcement, flagged by keyword adjustment for
+password-management phrasing.
+All three are standard enterprise queries containing injection-adjacent
+language in otherwise benign context.
 
-\textbf{Semantic Caching and Scalability.} The 87.2\% cache hit rate (757/868 hits) shows the LRU semantic cache is effective, reducing latency for repeated corpora. In production FAQ pipelines, 90\%+ hit rates are plausible, driving mean latency toward the L2-only path of $\approx$165\,ms. Cache keys on normalized decoded text prevent Unicode-variant poisoning.
+\textbf{Memory and cache.}
+Total in-memory footprint: $\approx$1.0\,GB: all-MiniLM 90\,MB + DeBERTa
+ONNX 738\,MB + cross-encoder $\approx$120\,MB + IForest fitted object
+1.4\,MB + OCSVM fitted object 2.8\,MB + training corpus embeddings 12.4\,MB
+($8{,}058 \times 384$ float32).
+The 87.2\% within-evaluation cache hit rate was confirmed to originate from
+byte-identical document-set retrieval within the holdout run (cold-start
+verified; zero training-holdout contamination; max training similarity
+0.7902).
+The 37.7\,ms benign-path mean is a cache-hit-path measurement: in the current
+sealed-run ordering, all 543 benign rows hit exact document caches populated
+earlier in the run. It should not be used as a steady-state latency estimate
+for novel benign queries. No latency figure reported in this paper reflects
+steady-state performance on a genuinely novel benign query.
 
-\textbf{Multi-Turn Crescendo Resistance.} The stateful drift tracker ($\tau_{drift} = 0.72$) counters crescendo jailbreaks where each turn appears innocuous but the cumulative trajectory escalates; full quantitative evaluation requires a dedicated multi-turn session benchmark.
+\textbf{Deployment gap.}
+RAG-Shield's 3.20\% FPR on the live-API subset exceeds the 1\% enterprise
+target; threshold recalibration on a commercial-distribution development set
+is required before deployment.
 
-\textbf{Limitations.}
-\begin{enumerate}
-  \item The 75-probe evasion set (11 attack families), while broader than prior work, is insufficient for fully reliable confidence intervals; $n \geq 200$ probes are planned.
-  \item Cross-lingual coverage is limited by the zero-shot XNLI fallback; a fine-tuned multilingual injection classifier is the highest-priority future work.
-  \item CPU mean latency (600\,ms) requires GPU for sub-200\,ms SLA; ONNX INT8 quantization reduces model size $4\times$ with $<$2\% accuracy loss.
-  \item FPR rises to 3.20\% on the commercial subset (vs.\ 0.55\% on the sealed holdout); domain-specific L1 retraining is planned to restore $\leq$1.0\% FPR. Static canary tokens are session-static; HMAC-signed per-session tokens are planned.
-\end{enumerate}
+\textbf{Limitations and Future Work.}
+\textbf{(1)~Adaptive adversaries:} published thresholds ($\tau_{early}=0.60$,
+$\tau_{block}=0.35$) enable boundary-search attacks; guarantees hold only
+for non-adaptive adversaries.
+\textbf{(2)~Synthetic holdout:} all 868 samples are synthetic,
+LLM-generated, or manually authored; no public benchmark samples appear in
+the holdout, limiting generalizability.
+\textbf{(3)~Multi-turn and response consistency:} crescendo detection is
+implemented but unevaluated; cross-encoder achieves zero consistency
+detection; evasion families with $n \leq 4$ need expansion to $n \geq 30$.
+\textbf{(4)~Threshold selection:} informal mixed process; systematic
+optimization on a documented development partition is planned.
 
-\textbf{Future Work.} Priority directions: (1)~fine-tuned multilingual injection classifier (Arabic, Chinese, Japanese); (2)~sliding-window multi-chunk aggregation for payload-splitting detection; (3)~reinforcement learning from analyst feedback on monitored-tier events.
+\textbf{Ethical Considerations.}
+Training and background corpora include public security/NLP datasets, while
+the sealed holdout and response-stage benchmark use synthetic or manually
+authored examples with artificial canary tokens.
+Attack examples are evaluated for defensive measurement only.
+Released artifacts will omit operational canary secrets, API keys, live
+service credentials, and instructions for targeting real services.
 
-%-----------------------------------------------------------------------
+%% ----------------------------------------------------------------
 \section{Conclusion}
+%% ----------------------------------------------------------------
 
-We presented RAG-Shield, a three-layer ensemble defense intercepting the RAG pipeline at retrieval input, generation context, and model output simultaneously. Through the combination of embedding-based OOD anomaly detection, transformer-based dual-stage intent classification with document-level chunk scanning, and output behavioral monitoring with cryptographic canary tokens---orchestrated by a calibrated 7-dimensional meta-aggregator---RAG-Shield achieves an Attack Detection Rate of \textbf{91.38\%} at an enterprise-grade FPR of \textbf{0.55\%} on the sealed $n = 868$ holdout.
-
-Head-to-head comparisons confirm +14.05\,pp ADR over Llama Prompt Guard~2 and +63.76\,pp over Llama-3.1-8B Guardrails. The ablation demonstrates that document-level DeBERTa scanning is the primary detection mechanism (L2-only ADR = 86.73\%), with Layer~1 adding structurally distinct anomalous detections and Layer~3 providing exfiltration coverage requiring separate output and session benchmarks.
-
-RAG-Shield demonstrates a broader design principle: heterogeneous layered detection provides robustness by ensuring that optimizing one evasion vector increases exposure to another layer. As RAG systems proliferate across enterprise, medical, and legal deployments, RAG-Shield provides a practical, modular security foundation with its open architecture supporting incremental improvement.
-
-
+We presented RAG-Shield, a layered ensemble defense for prompt-injection
+detection in RAG pipelines, combining embedding-based OOD anomaly detection
+with transformer-based dual-stage intent classification featuring
+document-level chunk scanning, orchestrated by a calibrated 7-dimensional
+meta-aggregator.
+RAG-Shield achieves ADR = 91.38\% (F1 = 95.04\%, PR-AUC = 0.9723) at
+0.55\% FPR on a sealed $n = 868$ synthetic/manually authored holdout, with
+overall mean latency of 562.95\,ms and cached benign-path mean latency of
+37.7\,ms (within-evaluation cache hits included; cold-start and zero training
+contamination verified).
+Response-stage checks are evaluated separately; semantic consistency
+detection is not a validated capability in this work.
+The 3.20\% FPR on the live-API subset requires recalibration, and the
+synthetic/manually authored holdout limits generalizability to real-world
+distributions.
+The highest-priority false-negative concentrations---\textit{multi\_step\_attack}
+(60\%), \textit{business\_workflow\_manipulation} (50\%), and
+\textit{data\_exfiltration} (85.9\%)---define the priority roadmap.
+RAG-Shield supports a broader design principle: heterogeneous layered
+detection improves robustness because evasions that suppress one signal may
+still expose anomalies to another layer.
 
 \section*{Acknowledgment}
-The authors thank the security research community for the publicly available injection benchmarks (InjecAgent, HackAPrompt) and the maintainers of HuggingFace Transformers, PyOD, scikit-learn, and Sentence-Transformers. Code, datasets, and pre-trained weights are available at \url{https://github.com/yomnafarag95/IEEE_Paper}. This research was conducted at the School of Computing, Queen's University, Kingston, Canada. No external funding was received.
+The authors thank the security research community for publicly available
+injection benchmarks and threat taxonomies (InjecAgent, HackAPrompt), which
+motivated the attack categories in this work, and the maintainers of
+HuggingFace Transformers, PyOD~\cite{zhao2019pyod}, scikit-learn, and
+Sentence-Transformers.
+An anonymized artifact bundle will be made available upon acceptance.
+No external funding was received.
 
-\begin{thebibliography}{22}
+\begin{thebibliography}{34}
 \footnotesize
 
 \bibitem{perez2022}
-F.~Perez and I.~Ribeiro, ``Ignore previous prompt: Attack techniques for language models,'' \emph{arXiv preprint arXiv:2211.09527}, Nov. 2022.
+F.~Perez and I.~Ribeiro, ``Ignore previous prompt: Attack techniques for
+language models,'' in \emph{Proc. NeurIPS Workshop Mach.\ Learn.\ Safety},
+2022, doi: 10.48550/arXiv.2211.09527.
+
+\bibitem{lewis2020rag}
+P.~Lewis \emph{et~al.}, ``Retrieval-augmented generation for
+knowledge-intensive NLP tasks,'' in \emph{Proc. NeurIPS}, 2020.
 
 \bibitem{greshake2023}
-K.~Greshake \emph{et~al.}, ``Not what you've signed up for: Compromising real-world LLM-integrated applications with indirect prompt injections,'' in \emph{Proc. ACM Workshop Artif. Intell. Secur. (AISec)}, 2023.
+K.~Greshake \emph{et~al.}, ``Not what you've signed up for: Compromising
+real-world LLM-integrated applications with indirect prompt injections,''
+in \emph{Proc. ACM Workshop Artif.\ Intell.\ Secur.\ (AISec)}, 2023.
 
 \bibitem{liu2023}
-Y.~Liu \emph{et~al.}, ``Prompt injection attack against LLM-integrated applications,'' \emph{arXiv preprint arXiv:2306.05499}, Jun. 2023.
+Y.~Liu \emph{et~al.}, ``Prompt injection attacks against LLM-integrated
+applications,'' \emph{arXiv preprint arXiv:2306.05499}, Jun. 2023.
 
 \bibitem{zhan2024}
-Q.~Zhan, Z.~Liang, Z.~Ying, and D.~Kang, ``InjecAgent: Benchmarking indirect prompt injections in tool-integrated large language model agents,'' \emph{arXiv preprint arXiv:2403.02691}, Mar. 2024.
+Q.~Zhan, Z.~Liang, Z.~Ying, and D.~Kang, ``InjecAgent: Benchmarking
+indirect prompt injections in tool-integrated large language model agents,''
+in \emph{Findings of ACL}, 2024,
+doi: 10.18653/v1/2024.findings-acl.624.
 
 \bibitem{yi2023}
-J.~Yi \emph{et~al.}, ``Benchmarking and defending against indirect prompt injection attacks on large language models,'' \emph{arXiv preprint arXiv:2312.14197}, Dec. 2023.
+J.~Yi \emph{et~al.}, ``Benchmarking and defending against indirect prompt
+injection attacks on large language models,''
+\emph{arXiv preprint arXiv:2312.14197}, Dec. 2023.
 
 \bibitem{protectai2023}
-ProtectAI, ``deberta-v3-base-prompt-injection-v2,'' HuggingFace Hub, 2023. [Online]. Available: \url{https://huggingface.co/protectai/deberta-v3-base-prompt-injection-v2}
+ProtectAI, ``deberta-v3-base-prompt-injection-v2,'' HuggingFace Hub, 2023.
+[Online]. Available:
+\url{https://huggingface.co/protectai/deberta-v3-base-prompt-injection-v2}
+[Accessed: Jun. 2026].
 
-\bibitem{iurman2023}
-ProtectAI, ``LLM-Guard: The security toolkit for LLM interactions,'' GitHub Repository, 2023. [Online]. Available: \url{https://github.com/protectai/llm-guard}
+\bibitem{llmguard2023}
+L.~Iurman \emph{et~al.}, ``LLM-Guard: The security toolkit for LLM
+interactions,'' GitHub Repository, ProtectAI, 2023.
+[Online]. Available: \url{https://github.com/protectai/llm-guard}
+[Accessed: Jun. 2026].
 
 \bibitem{rebedea2023}
-T.~Rebedea \emph{et~al.}, ``NeMo Guardrails: A toolkit for controllable and safe LLM applications with programmable rails,'' in \emph{Proc. EMNLP Syst. Demonstrations}, 2023, pp. 431--445.
+T.~Rebedea \emph{et~al.}, ``NeMo Guardrails: A toolkit for controllable
+and safe LLM applications with programmable rails,'' in
+\emph{Proc. EMNLP Syst.\ Demonstrations}, 2023, pp. 431--445.
 
 \bibitem{inan2023}
-H.~Inan \emph{et~al.}, ``Llama Guard: LLM-based input-output safeguard for human-AI conversations,'' \emph{arXiv preprint arXiv:2312.06674}, Dec. 2023.
+H.~Inan \emph{et~al.}, ``Llama Guard: LLM-based input-output safeguard for
+human-AI conversations,'' \emph{arXiv preprint arXiv:2312.06674}, Dec. 2023.
 
 \bibitem{xu2018}
-W.~Xu, J.~Evans, and Y.~Qi, ``Feature squeezing: Detecting adversarial examples in deep neural networks,'' in \emph{Proc. NDSS Symp.}, 2018.
+W.~Xu, J.~Evans, and Y.~Qi, ``Feature squeezing: Detecting adversarial
+examples in deep neural networks,'' in \emph{Proc. NDSS Symp.}, 2018.
 
 \bibitem{hendrycks2017}
-D.~Hendrycks and K.~Gimpel, ``A baseline for detecting misclassified and out-of-distribution examples in neural networks,'' in \emph{Proc. ICLR}, 2017.
+D.~Hendrycks and K.~Gimpel, ``A baseline for detecting misclassified and
+out-of-distribution examples in neural networks,'' in
+\emph{Proc. ICLR}, 2017.
 
-\bibitem{kreibich2003}
-C.~Kreibich and J.~Crowcroft, ``Honeycomb: Creating intrusion detection signatures using honeypots,'' in \emph{Proc. ACM Workshop Hot Topics Netw. (HotNets)}, 2003.
+\bibitem{spitzner2003}
+L.~Spitzner, ``Honeytokens: The other honeypot,'' \emph{SecurityFocus},
+Jul. 2003.
+[Online]. Available: \url{https://www.securityfocus.com/infocus/1713}
+[Accessed: Jun. 2026].
+
+\bibitem{bowen2009}
+S.~P.~Bowen \emph{et~al.}, ``Baiting inside attackers using decoy
+processes,'' in \emph{Proc. Int.\ Conf.\ Security and Privacy in Commun.\
+Networks (SecureComm)}, 2009, pp. 1--20.
 
 \bibitem{schulhoff2023}
-M.~Schulhoff \emph{et~al.}, ``Ignore this title and HackAPrompt: Exposing systemic vulnerabilities of LLMs through a global scale prompt hacking competition,'' in \emph{Proc. EMNLP}, 2023, pp. 4945--4977.
+M.~Schulhoff \emph{et~al.}, ``Ignore this title and HackAPrompt: Exposing
+systemic vulnerabilities of LLMs through a global scale prompt hacking
+competition,'' in \emph{Proc. EMNLP}, 2023, pp. 4945--4977.
 
 \bibitem{he2023}
-P.~He, J.~Gao, and W.~Chen, ``DeBERTa-V3: Improving DeBERTa using ELECTRA-style pre-training with gradient-disentangled embedding sharing,'' in \emph{Proc. ICLR}, 2023.
+P.~He, J.~Gao, and W.~Chen, ``DeBERTa-V3: Improving DeBERTa using
+ELECTRA-style pre-training with gradient-disentangled embedding sharing,''
+in \emph{Proc. ICLR}, 2023.
 
 \bibitem{reimers2019}
-N.~Reimers and I.~Gurevych, ``Sentence-BERT: Sentence embeddings using Siamese BERT-networks,'' in \emph{Proc. EMNLP}, 2019, pp. 3982--3992.
+N.~Reimers and I.~Gurevych, ``Sentence-BERT: Sentence embeddings using
+Siamese BERT-networks,'' in \emph{Proc. EMNLP}, 2019, pp. 3982--3992.
 
 \bibitem{allminilm2021}
-Microsoft, ``all-MiniLM-L6-v2: A sentence-transformers model for semantic similarity,'' HuggingFace Hub, 2021. [Online]. Available: \url{https://huggingface.co/sentence-transformers/all-MiniLM-L6-v2}
+N.~Reimers, ``all-MiniLM-L6-v2: A sentence-transformers model distilled
+from MS~MARCO,'' HuggingFace Hub, 2021.
+[Online]. Available:
+\url{https://huggingface.co/sentence-transformers/all-MiniLM-L6-v2}
+[Accessed: Jun. 2026].
 
 \bibitem{liu2008}
-F.~T.~Liu, K.~M.~Ting, and Z.-H.~Zhou, ``Isolation forest,'' in \emph{Proc. IEEE ICDM}, 2008, pp. 413--422.
+F.~T.~Liu, K.~M.~Ting, and Z.-H.~Zhou, ``Isolation forest,'' in
+\emph{Proc. IEEE ICDM}, 2008, pp. 413--422.
 
 \bibitem{li2023}
-Z.~Li \emph{et~al.}, ``ECOD: Unsupervised outlier detection using empirical cumulative distribution functions,'' \emph{IEEE Trans. Knowl. Data Eng.}, vol. 35, no. 12, pp. 12223--12236, 2023.
+Z.~Li \emph{et~al.}, ``ECOD: Unsupervised outlier detection using empirical
+cumulative distribution functions,'' \emph{IEEE Trans.\ Knowl.\ Data Eng.},
+vol.~35, no.~12, pp. 12223--12236, 2023.
 
 \bibitem{scholkopf2000}
-B.~Sch\"olkopf \emph{et~al.}, ``Support vector method for novelty detection,'' in \emph{Proc. NeurIPS}, 2000, pp. 582--588.
+B.~Sch\"olkopf \emph{et~al.}, ``Support vector method for novelty
+detection,'' in \emph{Proc. NeurIPS}, 2000, pp. 582--588.
+
+\bibitem{zhao2019pyod}
+Y.~Zhao, Z.~Nasrullah, and Z.~Li, ``PyOD: A Python toolbox for scalable
+outlier detection,'' \emph{J. Mach.\ Learn.\ Res.}, vol.~20, no.~96,
+pp. 1--7, 2019.
+
+\bibitem{pedregosa2011}
+F.~Pedregosa \emph{et~al.}, ``Scikit-learn: Machine learning in Python,''
+\emph{J. Mach.\ Learn.\ Res.}, vol.~12, pp. 2825--2830, 2011.
 
 \bibitem{onnxruntime2022}
-ONNX Runtime Developers, ``ONNX Runtime: Cross-platform, high performance ML inferencing and training accelerator,'' 2022. [Online]. Available: \url{https://onnxruntime.ai}
+ONNX Runtime Developers, ``ONNX Runtime,'' 2022.
+[Online]. Available: \url{https://onnxruntime.ai} [Accessed: Jun. 2026].
 
 \bibitem{conneau2020}
-A.~Conneau \emph{et~al.}, ``Unsupervised cross-lingual representation learning at scale,'' in \emph{Proc. ACL}, 2020, pp. 8440--8451.
+A.~Conneau \emph{et~al.}, ``Unsupervised cross-lingual representation
+learning at scale,'' in \emph{Proc. ACL}, 2020, pp. 8440--8451.
+
+\bibitem{langdetect2014}
+M.~Nakatani, ``Language detection library for Java,'' 2014.
+[Online]. Available: \url{https://github.com/shuyo/language-detection}
+[Accessed: Jun. 2026].
+
+\bibitem{pydantic2024}
+Pydantic Developers, ``Pydantic: Data validation using Python type hints,''
+2024.
+[Online]. Available: \url{https://docs.pydantic.dev} [Accessed: Jun. 2026].
+
+\bibitem{bajaj2016}
+P.~Bajaj \emph{et~al.}, ``MS MARCO: A human generated machine reading
+comprehension dataset,'' \emph{arXiv preprint arXiv:1611.09268}, Nov. 2016.
+
+\bibitem{metapromptguard2024}
+Meta, ``Llama Prompt Guard,'' 2024.
+[Online]. Available:
+\url{https://www.llama.com/docs/model-cards-and-prompt-formats/prompt-guard/}
+[Accessed: Jun. 2026].
 
 \bibitem{mcnemar1947}
-N.~McNemar, ``Note on the sampling error of the difference between correlated proportions or percentages,'' \emph{Psychometrika}, vol.~12, no.~2, pp. 153--157, 1947.
+Q.~McNemar, ``Note on the sampling error of the difference between
+correlated proportions or percentages,'' \emph{Psychometrika}, vol.~12,
+no.~2, pp. 153--157, 1947.
+
+\bibitem{azurepromptshield2024}
+Microsoft, ``Azure AI Content Safety: Prompt Shield,'' 2024.
+[Online]. Available:
+\url{https://learn.microsoft.com/en-us/azure/ai-services/content-safety/concepts/jailbreak-detection}
+[Accessed: Jun. 2026].
+
+\bibitem{rebuff2023}
+W.~Weng, ``Rebuff: Defending LLMs against prompt injection,'' GitHub, 2023.
+[Online]. Available: \url{https://github.com/woop/rebuff}
+[Accessed: Jun. 2026].
+
+\bibitem{promptbench2023}
+K.~Zhu \emph{et~al.}, ``PromptBench: Towards evaluating the robustness of
+large language models on adversarial prompts,''
+\emph{arXiv preprint arXiv:2306.04528}, Jun. 2023.
 
 \end{thebibliography}
 

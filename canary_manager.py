@@ -168,7 +168,7 @@ class CanaryManager:
         else:
             # Log a hash, never the token itself
             token_hash = hashlib.sha256(self.token.encode()).hexdigest()[:12]
-            logger.info("[Canary] Manager initialised. Token hash: %s", token_hash)
+            logger.info("[Canary] Manager initialized. Token hash: %s", token_hash)
 
     @property
     def is_active(self) -> bool:

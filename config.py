@@ -76,6 +76,7 @@ META_MONITOR_THRESHOLD = 0.31   # Optimal detection threshold: only 1/423 benign
                                 # (FPR_detection=0.24%). Attacks scoring 0.30–0.35 are flagged as
                                 # "monitored". Below 0.30 is the unresolvable overlap zone requiring
                                 # a stronger meta-model to penetrate further.
+META_BLOCK_CONSENSUS_THRESHOLD = 0.85  # Recorded for frozen-state compatibility.
 
 # ── Logging ───────────────────────────────────────────────────────────────────
 LOG_PATH          = str(_ROOT / "logs" / "pipeline.jsonl")

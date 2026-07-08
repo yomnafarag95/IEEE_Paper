@@ -40,6 +40,9 @@ from pathlib import Path
 from typing import Optional
 
 import numpy as np
+import matplotlib
+
+matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 from sklearn.metrics import (
     f1_score, precision_score, recall_score,
